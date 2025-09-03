@@ -9,7 +9,7 @@ from typing import List, Dict, Any
 # ---------------------------
 # CONFIG
 # ---------------------------
-st.set_page_config(page_title="SwasthyaBot", layout="centered")
+st.set_page_config(page_title="Dhanush", layout="centered")
 APP_TITLE = "🩺 Captain's — AI Health Chatbot"
 
 # ---------------------------
@@ -147,7 +147,7 @@ def render_history():
             f"""
             <div style='text-align:center; padding:20px;'>
                 <h3>👋 Welcome {st.session_state.user_name}!</h3>
-                <p>I’m <b>SwasthyaBot</b>, your AI assistant for:</p>
+                <p>I’m <b>Captain's</b>,AI assistant for:</p>
                 <ul style='text-align:left; max-width:500px; margin:auto;'>
                     <li>🩺 Health FAQs</li>
                     <li>💉 Vaccination details</li>
