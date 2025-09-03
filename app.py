@@ -9,17 +9,41 @@ from typing import List, Dict, Any
 # ---------------------------
 # CONFIG
 # ---------------------------
-st.set_page_config(page_title="SwasthyaBot", page_icon="🩺", layout="wide")
-APP_TITLE = "🩺 SwasthyaBot — AI Health Chatbot"
+st.set_page_config(page_title="SwasthyaBot", layout="centered")
+APP_TITLE = "🩺 Captain's — AI Health Chatbot"
 
 # ---------------------------
-# SESSION STATE INIT
+# SESSION STATE INIT & NORMALIZE
 # ---------------------------
 if "user_name" not in st.session_state:
     st.session_state.user_name = "Guest"
 
 if "history" not in st.session_state:
-    st.session_state.history: List[Dict[str, Any]] = []
+    st.session_state.history = []  # list of dicts: {"user":..., "bot":..., "name":..., "time":...}
+
+def _normalize_history():
+    """Make sure history entries are dicts with at least 'user' and 'bot' keys."""
+    normalized: List[Dict[str, Any]] = []
+    for entry in st.session_state.history:
+        try:
+            if isinstance(entry, dict):
+                user_text = entry.get("user", "")
+                bot_text = entry.get("bot", entry.get("answer", ""))
+                name = entry.get("name", st.session_state.user_name)
+                ts = entry.get("time", datetime.utcnow().isoformat())
+            elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                user_text = entry[0]
+                bot_text = entry[1]
+                name = st.session_state.user_name
+                ts = datetime.utcnow().isoformat()
+            else:
+                continue
+            normalized.append({"user": str(user_text), "bot": str(bot_text), "name": name, "time": ts})
+        except Exception:
+            continue
+    st.session_state.history = normalized
+
+_normalize_history()
 
 # ---------------------------
 # DATASET URLS
@@ -29,7 +53,7 @@ VACCINE_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-healt
 OUTBREAK_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/refs/heads/main/outbreak.csv"
 
 # ---------------------------
-# CSV LOADER (silent)
+# ROBUST CSV LOADER
 # ---------------------------
 @st.cache_data
 def load_dataset(url: str, category: str) -> pd.DataFrame:
@@ -43,8 +67,6 @@ def load_dataset(url: str, category: str) -> pd.DataFrame:
     df.columns = [c.strip().lower() for c in df.columns]
     if "question" not in df.columns or "answer" not in df.columns:
         return pd.DataFrame(columns=["question", "answer", "category"])
-    df["question"] = df["question"].astype(str).str.strip()
-    df["answer"] = df["answer"].astype(str).str.strip()
     df["category"] = category
     return df[["question", "answer", "category"]]
 
@@ -56,13 +78,14 @@ kb = pd.concat([faq_df, vaccine_df, outbreak_df], ignore_index=True).dropna(subs
 kb = kb.reset_index(drop=True)
 
 # ---------------------------
-# EMBEDDINGS
+# EMBEDDING MODEL
 # ---------------------------
 @st.cache_resource
 def load_embedder():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
-embedder, kb_embeddings = None, None
+embedder = None
+kb_embeddings = None
 if not kb.empty:
     embedder = load_embedder()
     @st.cache_data
@@ -75,58 +98,83 @@ if not kb.empty:
 # ---------------------------
 def get_answer_from_kb(query: str) -> str:
     if kb.empty or kb_embeddings is None:
-        return "⚠️ Knowledge base not available. Please check the dataset files."
+        return "⚠️ Knowledge base not available. Please check the dataset."
     try:
         q_emb = embedder.encode(query, convert_to_tensor=True)
         scores = util.pytorch_cos_sim(q_emb, kb_embeddings)[0]
         best_idx = int(torch.argmax(scores).item())
         best_score = float(scores[best_idx])
         if best_score < 0.35:
-            return "🤔 I couldn't find a confident answer. Please rephrase your question or consult a health worker."
+            return "❓ I couldn’t find a confident answer. Please rephrase your question."
         return str(kb.loc[best_idx, "answer"])
     except Exception as e:
-        return f"Error: {e}"
+        return f"Error retrieving answer: {e}"
 
 # ---------------------------
-# UI LAYOUT
+# UI HEADER + SIDEBAR
 # ---------------------------
-# Sidebar
+st.markdown(f"<h1 style='text-align:center'>{APP_TITLE}</h1>", unsafe_allow_html=True)
+st.markdown("<hr>", unsafe_allow_html=True)
+
 with st.sidebar:
-    st.title("⚙️ Menu")
-    st.subheader("Patient Info")
-    st.session_state.user_name = st.text_input("Name", value=st.session_state.user_name)
+    st.header("👤 Patient Info")
+    st.session_state.user_name = st.text_input("Your Name", value=st.session_state.user_name)
     if st.button("🗑 Clear chat"):
         st.session_state.history = []
-        st.experimental_rerun()
-
-# Main Title
-st.markdown(f"<h1 style='text-align:center;'>{APP_TITLE}</h1>", unsafe_allow_html=True)
-st.divider()
+        st.rerun()
 
 # ---------------------------
 # Chat Input
 # ---------------------------
-user_message = st.chat_input("Ask about health, vaccination, or outbreaks...")
+user_message = None
+try:
+    user_message = st.chat_input("Ask about health, vaccination, or outbreaks...")
+except Exception:
+    user_message = st.text_input("Ask about health, vaccination, or outbreaks:")
 
 if user_message:
+    name_at_time = st.session_state.user_name or "Guest"
     answer_text = get_answer_from_kb(user_message)
-    st.session_state.history.append({
-        "user": user_message,
-        "bot": answer_text,
-        "name": st.session_state.user_name or "Guest",
-        "time": datetime.utcnow().isoformat()
-    })
+    entry = {"user": str(user_message), "bot": str(answer_text), "name": name_at_time, "time": datetime.utcnow().isoformat()}
+    st.session_state.history.append(entry)
 
 # ---------------------------
-# Render Chat (like ChatGPT)
+# Render chat / Welcome page
 # ---------------------------
-for entry in st.session_state.history:
-    name = entry.get("name", "Guest")
-    user_txt = entry.get("user", "")
-    bot_txt = entry.get("bot", "")
+def render_history():
+    if not st.session_state.history:
+        st.markdown(
+            f"""
+            <div style='text-align:center; padding:20px;'>
+                <h3>👋 Welcome {st.session_state.user_name}!</h3>
+                <p>I’m <b>SwasthyaBot</b>, your AI assistant for:</p>
+                <ul style='text-align:left; max-width:500px; margin:auto;'>
+                    <li>🩺 Health FAQs</li>
+                    <li>💉 Vaccination details</li>
+                    <li>🚨 Outbreak alerts</li>
+                </ul>
+                <p>Type your question below to begin the conversation.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
 
-    with st.chat_message("user"):
-        st.markdown(f"**{name}:** {user_txt}")
+    for entry in st.session_state.history:
+        if not isinstance(entry, dict):
+            continue
+        user_txt = entry.get("user", "")
+        bot_txt = entry.get("bot", "⚠️ No answer available.")
+        name = entry.get("name", st.session_state.user_name or "Guest")
+        try:
+            with st.chat_message("user"):
+                st.markdown(f"**{name}:** {user_txt}")
+        except Exception:
+            st.markdown(f"**{name}:** {user_txt}")
+        try:
+            with st.chat_message("assistant"):
+                st.markdown(bot_txt)
+        except Exception:
+            st.markdown(bot_txt)
 
-    with st.chat_message("assistant"):
-        st.markdown(bot_txt)
+render_history()
