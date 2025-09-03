@@ -20,9 +20,9 @@ st.set_page_config(page_title="SwasthyaBot", layout="wide")
 st.title("🩺 SwasthyaBot – AI Health Chatbot")
 
 # GitHub raw dataset links (replace USERNAME/REPO with your repo name)
-FAQ_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/data/health_faq.csv"
-VACCINE_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/data/vaccination.csv"
-OUTBREAK_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/data/outbreak.csv"
+FAQ_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/refs/heads/main/health_faq.csv"
+VACCINE_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/refs/heads/main/vaccination.csv"
+OUTBREAK_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/refs/heads/main/outbreak.csv"
 
 # ---------------------------
 # Load datasets
