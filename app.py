@@ -9,8 +9,8 @@ from typing import List, Dict, Any
 # ---------------------------
 # CONFIG
 # ---------------------------
-st.set_page_config(page_title="Dhanush", layout="centered")
-APP_TITLE = "🩺 Captain's — AI Health Chatbot"
+st.set_page_config(page_title="Crafter's", layout="centered")
+APP_TITLE = "🩺 Crafter's — AI Health Chatbot"
 
 # ---------------------------
 # SESSION STATE INIT & NORMALIZE
