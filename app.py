@@ -22,11 +22,36 @@ if "disease_context" not in st.session_state:
     st.session_state.disease_context = None
 
 # ---------------------------
-# Load model and tokenizer
+# Built-in disease dictionary
+# ---------------------------
+DISEASE_KB = {
+    "covid": {
+        "symptoms": "Fever, dry cough, tiredness, loss of taste or smell.",
+        "advice": "Rest, stay hydrated, monitor oxygen levels, isolate if positive.",
+        "vaccination": "Ensure you are fully vaccinated and take booster doses if eligible.",
+        "doctor_alert": "Consult a doctor if high fever or breathing difficulties occur."
+    },
+    "dengue": {
+        "symptoms": "High fever, severe headache, pain behind eyes, muscle and joint pains, nausea, vomiting.",
+        "advice": "Rest, stay hydrated, avoid aspirin, monitor platelet count.",
+        "vaccination": "No widely used vaccine for all age groups, consult doctor if travel history present.",
+        "doctor_alert": "Seek immediate medical attention if bleeding or severe pain occurs."
+    },
+    "cold": {
+        "symptoms": "Sneezing, runny nose, mild cough, sore throat.",
+        "advice": "Rest, drink warm fluids, maintain hygiene.",
+        "vaccination": "Flu vaccine recommended annually.",
+        "doctor_alert": "Consult doctor if symptoms worsen or persist beyond 7 days."
+    },
+    # Add more diseases as needed
+}
+
+# ---------------------------
+# Load FLAN-T5-base model
 # ---------------------------
 @st.cache_resource
 def load_model():
-    model_name = "google/flan-t5-small"  # very small CPU-friendly model
+    model_name = "google/flan-t5-base"  # small CPU-friendly instruct model
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
     nlp = pipeline("text2text-generation", model=model, tokenizer=tokenizer, max_length=200)
@@ -38,8 +63,20 @@ generator = load_model()
 # LLM RESPONSE FUNCTION
 # ---------------------------
 def get_llm_response(user_message, context=None):
+    # Check disease dictionary first
+    lower_msg = user_message.lower()
+    for disease, info in DISEASE_KB.items():
+        if disease in lower_msg:
+            return (
+                f"**Symptoms:** {info['symptoms']}\n"
+                f"**Advice:** {info['advice']}\n"
+                f"**Vaccination tips:** {info['vaccination']}\n"
+                f"**Doctor Alert:** {info['doctor_alert']}"
+            )
+    
+    # Otherwise, use the LLM
     prompt = f"""
-You are a friendly health assistant.
+You are a friendly professional health assistant.
 Analyze symptoms, give reassurance for mild issues, preventive advice, vaccination tips, and doctor alerts.
 User Name: {st.session_state.user_name}
 """
@@ -54,7 +91,7 @@ User Name: {st.session_state.user_name}
         return f"⚠️ Error generating response: {e}"
 
 # ---------------------------
-# Sidebar
+# Sidebar for user info
 # ---------------------------
 with st.sidebar:
     st.header("👤 Patient Info")
@@ -81,7 +118,7 @@ if user_message:
     st.session_state.history.append(entry)
 
 # ---------------------------
-# Render chat
+# Render chat / Welcome
 # ---------------------------
 def render_history():
     if not st.session_state.history:
