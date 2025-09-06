@@ -34,7 +34,7 @@ except ImportError:
     st.stop()
 
 # ---------------------------
-# Sidebar for API key (if not set)
+# Sidebar for API key
 # ---------------------------
 with st.sidebar:
     st.header("👤 Patient Info / API Key")
@@ -52,23 +52,19 @@ if not st.session_state.api_key:
     st.warning("⚠️ OpenAI API key not set. Enter your key in the sidebar to continue.")
     st.stop()
 
-openai.api_key = st.session_state.api_key
+# Initialize OpenAI client
+client = openai.OpenAI(api_key=st.session_state.api_key)
 
 # ---------------------------
-# LLM RESPONSE FUNCTION
+# LLM RESPONSE FUNCTION (New API)
 # ---------------------------
 def get_llm_response(user_message, context=None):
     """
-    Generates health advice using LLM with context awareness
+    Generates health advice using LLM with context awareness (OpenAI >=1.0.0)
     """
     prompt = f"""
 You are a professional and friendly health assistant.
-- Analyze symptoms if the user describes them.
-- Provide reassurance for mild issues.
-- Give preventive advice, vaccination suggestions, and alert if doctor consultation is needed.
-- Be concise and clear.
-- Respond in natural, human-friendly language.
-
+Analyze symptoms, give reassurance for mild issues, preventive advice, vaccination tips, and doctor alerts.
 User Name: {st.session_state.user_name}
 """
     if context:
@@ -76,12 +72,12 @@ User Name: {st.session_state.user_name}
     prompt += f"User: {user_message}\nAssistant:"
 
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-5-mini",
             messages=[{"role": "system", "content": prompt}],
             temperature=0.7
         )
-        return response.choices[0].message['content']
+        return response.choices[0].message.content
     except Exception as e:
         return f"⚠️ Error generating response: {e}"
 
