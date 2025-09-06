@@ -1,4 +1,22 @@
-question,answer
-When should I take tetanus vaccine?,Tetanus booster is needed every 10 years or after deep wounds.
-What is the polio vaccination schedule?,Oral polio vaccine at birth, 6, 10, 14 weeks and boosters later.
-Is COVID-19 booster necessary?,Yes, booster is recommended after primary doses as per govt guidelines.
+question,answer,category
+At what age should children get the measles vaccine?,Children should receive their first measles vaccine dose at 9–12 months.,Vaccination
+Is vaccination safe during pregnancy?,Yes, certain vaccines like flu and Tdap are safe. Always consult a doctor first.,Vaccination
+Do vaccines have side effects?,Most vaccines cause mild side effects like soreness or fever, which go away quickly.,Vaccination
+Why are booster doses important?,Boosters help maintain long-term immunity against diseases.,Vaccination
+Can vaccines prevent COVID-19?,Yes, COVID-19 vaccines reduce the risk of severe illness and hospitalization.,Vaccination
+What vaccines are needed at birth?,BCG, Hepatitis B, and Polio vaccines are usually given at birth.,Vaccination
+What is herd immunity?,When most people are vaccinated, the spread of disease is reduced in the community.,Vaccination
+Are vaccines safe for children?,Yes, vaccines are tested for safety and are crucial for preventing diseases.,Vaccination
+Can adults get vaccines too?,Yes, vaccines like flu, tetanus, and COVID-19 are recommended for adults.,Vaccination
+Do vaccines cause autism?,No, there is no scientific evidence linking vaccines to autism.,Vaccination
+Why is the polio vaccine important?,It protects against paralysis and helps eradicate polio worldwide.,Vaccination
+How long does vaccine protection last?,Some vaccines last for life, others require boosters.,Vaccination
+Can I get vaccinated if I’m sick?,Mild illness is fine, but severe illness may require postponement.,Vaccination
+What is the HPV vaccine for?,It protects against cervical cancer and other HPV-related diseases.,Vaccination
+Do vaccines work immediately?,It usually takes 2–3 weeks for immunity to build after vaccination.,Vaccination
+Why are travel vaccines needed?,They protect against diseases common in certain countries, like yellow fever.,Vaccination
+Can vaccines be taken together?,Yes, many vaccines can be given at the same time safely.,Vaccination
+Are vaccines free in India?,Yes, many essential vaccines are provided free under government programs.,Vaccination
+What is a vaccine passport?,It’s proof of vaccination required for international travel in some countries.,Vaccination
+How do vaccines work?,Vaccines train the immune system to fight infections without causing illness.,Vaccination
+
