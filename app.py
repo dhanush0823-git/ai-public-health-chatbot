@@ -23,7 +23,7 @@ if "welcome_shown" not in st.session_state:
     st.session_state.welcome_shown = False
 
 # ---------------------------
-# Disease Dictionary (known diseases for dashboard)
+# Disease Dictionary
 # ---------------------------
 DISEASE_KB = {
     "covid": {
@@ -89,6 +89,13 @@ generator = load_model()
 def get_llm_response(user_message, context=None):
     lower_msg = user_message.lower()
     
+    # Anxiety/fear handling
+    fear_keywords = ["die", "afraid", "panic", "worried", "scared"]
+    if any(word in lower_msg for word in fear_keywords):
+        return ("I understand your concern. Most illnesses are manageable. "
+                "Please monitor your symptoms, rest, stay hydrated, and consult a doctor if severe. "
+                "You are not alone, and help is available.")
+
     # Check if any known disease is mentioned
     for disease, info in DISEASE_KB.items():
         if disease in lower_msg:
@@ -105,13 +112,15 @@ def get_llm_response(user_message, context=None):
     if context:
         structured_context = "\n".join([f"User: {u}\nAssistant: {b}" for u, b in context])
     
-    # Prompt with repetition control
+    # Multi-symptom prompt
     prompt = f"""
 You are a professional, friendly health assistant.
 - Analyze symptoms, provide preventive advice, vaccination tips, and doctor alerts.
-- Avoid repeating sentences or giving unrealistic suggestions (like 'use a stethoscope at home').
-- Use previous conversation context to answer follow-ups accurately.
-- Be concise, clear, and realistic.
+- Avoid repeating sentences.
+- Avoid unrealistic suggestions.
+- Use previous conversation context for follow-ups.
+- If multiple symptoms are mentioned, suggest possible disease(s) with advice.
+- Be concise, empathetic, and realistic.
 
 Previous conversation:
 {structured_context}
@@ -203,7 +212,6 @@ if st.session_state.disease_detected:
     })
     
     st.table(dashboard_df)
-    
     st.markdown(
         f"<p style='font-weight:bold'>Severity: <span style='color:{severity_color.get(info['severity'],'black')}'>{info['severity']}</span></p>",
         unsafe_allow_html=True
