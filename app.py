@@ -88,7 +88,7 @@ generator = load_model()
 # ---------------------------
 def get_llm_response(user_message, context=None):
     lower_msg = user_message.lower()
-    
+
     # Anxiety/fear handling
     fear_keywords = ["die", "afraid", "panic", "worried", "scared"]
     if any(word in lower_msg for word in fear_keywords):
@@ -96,41 +96,49 @@ def get_llm_response(user_message, context=None):
                 "Please monitor your symptoms, rest, stay hydrated, and consult a doctor if severe. "
                 "You are not alone, and help is available.")
 
-    # Check if any known disease is mentioned
+    # Known disease
     for disease, info in DISEASE_KB.items():
         if disease in lower_msg:
             st.session_state.disease_detected = disease
-            return (
+            bot_answer = (
                 f"**Symptoms:** {info['symptoms']}\n"
                 f"**Advice:** {info['advice']}\n"
                 f"**Vaccination tips:** {info['vaccination']}\n"
                 f"**Doctor Alert:** {info['doctor_alert']}"
             )
-    
-    # Structured context for follow-ups
+            # Avoid repeated answer
+            if context and bot_answer in [b for u, b in context]:
+                bot_answer += "\n(Additional note: consult your doctor if symptoms persist.)"
+            return bot_answer
+
+    # Build structured context
     structured_context = ""
     if context:
-        structured_context = "\n".join([f"User: {u}\nAssistant: {b}" for u, b in context])
-    
-    # Multi-symptom prompt
+        structured_context = "\n".join([f"User: {u}\nAssistant: {b}" for u, b in context[-5:]])
+
+    # Prompt
     prompt = f"""
 You are a professional, friendly health assistant.
-- Analyze symptoms, provide preventive advice, vaccination tips, and doctor alerts.
-- Avoid repeating sentences.
-- Avoid unrealistic suggestions.
-- Use previous conversation context for follow-ups.
-- If multiple symptoms are mentioned, suggest possible disease(s) with advice.
-- Be concise, empathetic, and realistic.
+- Analyze symptoms, give preventive advice, vaccination tips, doctor alerts.
+- Avoid repeating sentences or answers.
+- Do not copy previous replies exactly; vary phrasing.
+- Use last 5 conversation turns as context for follow-ups.
+- Provide realistic advice.
 
 Previous conversation:
 {structured_context}
 
-Current user input: {user_message}
+User input: {user_message}
 Assistant:
 """
     try:
         response = generator(prompt)
-        return response[0]["generated_text"].strip()
+        bot_answer = response[0]["generated_text"].strip()
+        # Filter exact repetition
+        recent_answers = [b for u, b in context] if context else []
+        if bot_answer in recent_answers:
+            bot_answer += " (Please follow up if symptoms change or persist.)"
+        return bot_answer
     except Exception as e:
         return f"⚠️ Error generating response: {e}"
 
