@@ -147,7 +147,7 @@ def render_history():
             f"""
             <div style='text-align:center; padding:20px;'>
                 <h3>👋 Welcome {st.session_state.user_name}!</h3>
-                <p>I’m <b>Captain's</b>,AI assistant for:</p>
+                <p>I’m <b>Crafter's</b>,AI assistant for:</p>
                 <ul style='text-align:left; max-width:500px; margin:auto;'>
                     <li>🩺 Health FAQs</li>
                     <li>💉 Vaccination details</li>
