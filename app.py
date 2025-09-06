@@ -3,6 +3,7 @@ import streamlit as st
 from datetime import datetime
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import pandas as pd
+from fpdf import FPDF
 
 # ---------------------------
 # CONFIG
@@ -68,7 +69,7 @@ generator = load_model()
 def get_llm_response(user_message, context=None):
     lower_msg = user_message.lower()
 
-    # Check known diseases
+    # Disease dictionary first
     for disease, info in DISEASE_KB.items():
         if disease in lower_msg:
             st.session_state.disease_detected = disease
@@ -79,15 +80,17 @@ def get_llm_response(user_message, context=None):
                 f"**Doctor Alert:** {info['doctor_alert']}"
             )
 
-    # Build structured conversation context
+    # Structured conversation context
     structured_context = ""
     if context:
         structured_context = "\n".join([f"User: {u}\nAssistant: {b}" for u, b in context])
 
     prompt = f"""
 You are a professional, friendly health assistant.
-Analyze symptoms, give reassurance for mild issues, preventive advice, vaccination tips, and alert when doctor consultation is needed.
-Avoid repeating questions unnecessarily.
+Analyze symptoms, provide preventive advice, vaccination tips, and doctor alerts.
+Avoid repeating sentences and giving unrealistic suggestions (like 'use a stethoscope at home').
+Use previous conversation context for follow-ups.
+
 Previous conversation:
 {structured_context}
 
@@ -111,6 +114,16 @@ with st.sidebar:
         st.session_state.disease_detected = None
         st.session_state.welcome_shown = False
         st.rerun()
+    if st.button("📄 Export Chat as PDF"):
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+        for entry in st.session_state.history:
+            pdf.multi_cell(0, 10, f"{entry['name']}: {entry['user']}")
+            pdf.multi_cell(0, 10, f"Bot: {entry['bot']}\n")
+        pdf_file = "chat_history.pdf"
+        pdf.output(pdf_file)
+        st.success(f"PDF saved: {pdf_file}")
 
 # ---------------------------
 # Main UI
@@ -143,10 +156,8 @@ if not st.session_state.welcome_shown:
 # ---------------------------
 user_message = st.chat_input("Ask about health, vaccination, or outbreaks...")
 if user_message:
-    # Last 5 turns as context
     context_text = [(e['user'], e['bot']) for e in st.session_state.history[-5:]]
     answer_text = get_llm_response(user_message, context=context_text)
-
     st.session_state.history.append({
         "user": user_message,
         "bot": answer_text,
@@ -181,7 +192,6 @@ if st.session_state.disease_detected:
     
     st.table(dashboard_df)
     
-    # Highlight severity
     st.markdown(
         f"<p style='font-weight:bold'>Severity: <span style='color:{severity_color.get(info['severity'],'black')}'>{info['severity']}</span></p>",
         unsafe_allow_html=True
