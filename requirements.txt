@@ -1,5 +1,2 @@
 streamlit
-pandas
-torch
-sentence-transformers
-transformers
+openai
