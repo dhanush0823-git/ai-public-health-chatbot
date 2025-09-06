@@ -4,15 +4,6 @@ from datetime import datetime
 import os
 
 # ---------------------------
-# Check if openai is installed
-# ---------------------------
-try:
-    import openai
-except ImportError:
-    st.error("The 'openai' package is not installed. Please add it to requirements.txt or run 'pip install openai'.")
-    st.stop()
-
-# ---------------------------
 # CONFIG
 # ---------------------------
 st.set_page_config(page_title="Crafter's", layout="centered")
@@ -30,15 +21,38 @@ if "history" not in st.session_state:
 if "disease_context" not in st.session_state:
     st.session_state.disease_context = None
 
-# ---------------------------
-# OPENAI API KEY
-# ---------------------------
-# Recommended: set environment variable OPENAI_API_KEY in your system or Streamlit secrets
-openai.api_key = os.getenv("OPENAI_API_KEY")
+if "api_key" not in st.session_state:
+    st.session_state.api_key = os.getenv("OPENAI_API_KEY", "")
 
-if not openai.api_key:
-    st.warning("⚠️ OpenAI API key not set. Please set the OPENAI_API_KEY environment variable.")
+# ---------------------------
+# OPENAI IMPORT
+# ---------------------------
+try:
+    import openai
+except ImportError:
+    st.error("The 'openai' package is not installed. Run 'pip install openai'.")
     st.stop()
+
+# ---------------------------
+# Sidebar for API key (if not set)
+# ---------------------------
+with st.sidebar:
+    st.header("👤 Patient Info / API Key")
+    st.session_state.user_name = st.text_input("Your Name", value=st.session_state.user_name)
+    if not st.session_state.api_key:
+        st.session_state.api_key = st.text_input("Enter OpenAI API Key", type="password")
+
+    if st.button("🗑 Clear chat"):
+        st.session_state.history = []
+        st.session_state.disease_context = None
+        st.rerun()
+
+# Validate API key
+if not st.session_state.api_key:
+    st.warning("⚠️ OpenAI API key not set. Enter your key in the sidebar to continue.")
+    st.stop()
+
+openai.api_key = st.session_state.api_key
 
 # ---------------------------
 # LLM RESPONSE FUNCTION
@@ -70,20 +84,6 @@ User Name: {st.session_state.user_name}
         return response.choices[0].message['content']
     except Exception as e:
         return f"⚠️ Error generating response: {e}"
-
-# ---------------------------
-# UI HEADER + SIDEBAR
-# ---------------------------
-st.markdown(f"<h1 style='text-align:center'>{APP_TITLE}</h1>", unsafe_allow_html=True)
-st.markdown("<hr>", unsafe_allow_html=True)
-
-with st.sidebar:
-    st.header("👤 Patient Info")
-    st.session_state.user_name = st.text_input("Your Name", value=st.session_state.user_name)
-    if st.button("🗑 Clear chat"):
-        st.session_state.history = []
-        st.session_state.disease_context = None
-        st.rerun()
 
 # ---------------------------
 # Chat Input
