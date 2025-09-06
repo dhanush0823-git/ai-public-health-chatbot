@@ -87,60 +87,32 @@ generator = load_model()
 # LLM RESPONSE FUNCTION
 # ---------------------------
 def get_llm_response(user_message, context=None):
-    lower_msg = user_message.lower()
-
-    # Anxiety/fear handling
-    fear_keywords = ["die", "afraid", "panic", "worried", "scared"]
-    if any(word in lower_msg for word in fear_keywords):
-        return ("I understand your concern. Most illnesses are manageable. "
-                "Please monitor your symptoms, rest, stay hydrated, and consult a doctor if severe. "
-                "You are not alone, and help is available.")
-
-    # Known disease
-    for disease, info in DISEASE_KB.items():
-        if disease in lower_msg:
-            st.session_state.disease_detected = disease
-            bot_answer = (
-                f"**Symptoms:** {info['symptoms']}\n"
-                f"**Advice:** {info['advice']}\n"
-                f"**Vaccination tips:** {info['vaccination']}\n"
-                f"**Doctor Alert:** {info['doctor_alert']}"
-            )
-            # Avoid repeated answer
-            if context and bot_answer in [b for u, b in context]:
-                bot_answer += "\n(Additional note: consult your doctor if symptoms persist.)"
-            return bot_answer
-
-    # Build structured context
-    structured_context = ""
+    # Build context string
+    context_text = ""
     if context:
-        structured_context = "\n".join([f"User: {u}\nAssistant: {b}" for u, b in context[-5:]])
+        context_text = "\n".join([f"User: {u}\nBot: {b}" for u, b in context[-5:]])
 
-    # Prompt
     prompt = f"""
-You are a professional, friendly health assistant.
-- Analyze symptoms, give preventive advice, vaccination tips, doctor alerts.
-- Avoid repeating sentences or answers.
-- Do not copy previous replies exactly; vary phrasing.
-- Use last 5 conversation turns as context for follow-ups.
-- Provide realistic advice.
+You are a professional health assistant.
+- Analyze symptoms, provide advice, vaccination tips, doctor alerts.
+- Avoid repeating previous responses.
+- Be concise and empathetic.
 
 Previous conversation:
-{structured_context}
+{context_text}
 
-User input: {user_message}
-Assistant:
-"""
-    try:
-        response = generator(prompt)
-        bot_answer = response[0]["generated_text"].strip()
-        # Filter exact repetition
-        recent_answers = [b for u, b in context] if context else []
-        if bot_answer in recent_answers:
-            bot_answer += " (Please follow up if symptoms change or persist.)"
-        return bot_answer
-    except Exception as e:
-        return f"⚠️ Error generating response: {e}"
+User: {user_message}
+Bot:"""
+
+    response = chatbot(prompt, max_length=200, do_sample=True, temperature=0.7)
+    bot_answer = response[0]['generated_text'].strip()
+    
+    # Repetition filter
+    if context and bot_answer in [b for u, b in context]:
+        bot_answer += " (Please consult a doctor if symptoms persist or worsen.)"
+
+    return bot_answer
+
 
 # ---------------------------
 # Sidebar
