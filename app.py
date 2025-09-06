@@ -1,8 +1,7 @@
 # app.py
 import streamlit as st
 from datetime import datetime
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-import torch
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
 # ---------------------------
 # CONFIG
@@ -27,10 +26,10 @@ if "disease_context" not in st.session_state:
 # ---------------------------
 @st.cache_resource
 def load_model():
-    model_name = "tiiuae/falcon-7b-instruct"  # smaller instruct model
+    model_name = "google/flan-t5-small"  # very small CPU-friendly model
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
-    nlp = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=200)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+    nlp = pipeline("text2text-generation", model=model, tokenizer=tokenizer, max_length=200)
     return nlp
 
 generator = load_model()
@@ -40,7 +39,7 @@ generator = load_model()
 # ---------------------------
 def get_llm_response(user_message, context=None):
     prompt = f"""
-You are a professional and friendly health assistant.
+You are a friendly health assistant.
 Analyze symptoms, give reassurance for mild issues, preventive advice, vaccination tips, and doctor alerts.
 User Name: {st.session_state.user_name}
 """
@@ -50,12 +49,12 @@ User Name: {st.session_state.user_name}
 
     try:
         response = generator(prompt)
-        return response[0]["generated_text"].split("Assistant:")[-1].strip()
+        return response[0]["generated_text"].strip()
     except Exception as e:
         return f"⚠️ Error generating response: {e}"
 
 # ---------------------------
-# Sidebar for user info
+# Sidebar
 # ---------------------------
 with st.sidebar:
     st.header("👤 Patient Info")
@@ -82,7 +81,7 @@ if user_message:
     st.session_state.history.append(entry)
 
 # ---------------------------
-# Render chat / Welcome
+# Render chat
 # ---------------------------
 def render_history():
     if not st.session_state.history:
