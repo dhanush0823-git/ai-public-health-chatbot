@@ -15,13 +15,10 @@ APP_TITLE = "🩺 Crafter's — AI Health Chatbot"
 # ---------------------------
 if "user_name" not in st.session_state:
     st.session_state.user_name = "Guest"
-
 if "history" not in st.session_state:
     st.session_state.history = []
-
 if "disease_detected" not in st.session_state:
     st.session_state.disease_detected = None
-
 if "welcome_shown" not in st.session_state:
     st.session_state.welcome_shown = False
 
@@ -53,7 +50,7 @@ DISEASE_KB = {
 }
 
 # ---------------------------
-# Load FLAN-T5-base model
+# Load LLM model
 # ---------------------------
 @st.cache_resource
 def load_model():
@@ -70,7 +67,8 @@ generator = load_model()
 # ---------------------------
 def get_llm_response(user_message, context=None):
     lower_msg = user_message.lower()
-    # Check disease dictionary
+
+    # Check known diseases
     for disease, info in DISEASE_KB.items():
         if disease in lower_msg:
             st.session_state.disease_detected = disease
@@ -80,14 +78,20 @@ def get_llm_response(user_message, context=None):
                 f"**Vaccination tips:** {info['vaccination']}\n"
                 f"**Doctor Alert:** {info['doctor_alert']}"
             )
-    # Unknown / general questions
-    prompt = f"""
-You are a friendly professional health assistant.
-Explain clearly and briefly for general health questions.
-Avoid repeating the user's name unnecessarily.
 
-Previous conversation context: {context if context else 'None'}
-User question: {user_message}
+    # Build structured conversation context
+    structured_context = ""
+    if context:
+        structured_context = "\n".join([f"User: {u}\nAssistant: {b}" for u, b in context])
+
+    prompt = f"""
+You are a professional, friendly health assistant.
+Analyze symptoms, give reassurance for mild issues, preventive advice, vaccination tips, and alert when doctor consultation is needed.
+Avoid repeating questions unnecessarily.
+Previous conversation:
+{structured_context}
+
+Current user input: {user_message}
 Assistant:
 """
     try:
@@ -109,14 +113,12 @@ with st.sidebar:
         st.rerun()
 
 # ---------------------------
-# Main layout
+# Main UI
 # ---------------------------
 st.markdown(f"<h1 style='text-align:center'>{APP_TITLE}</h1>", unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# ---------------------------
-# Welcome message
-# ---------------------------
+# Welcome
 if not st.session_state.welcome_shown:
     st.markdown(
         f"""
@@ -141,9 +143,10 @@ if not st.session_state.welcome_shown:
 # ---------------------------
 user_message = st.chat_input("Ask about health, vaccination, or outbreaks...")
 if user_message:
-    context_text = "\n".join([f"{e['user']}: {e['bot']}" for e in st.session_state.history[-5:]])
+    # Last 5 turns as context
+    context_text = [(e['user'], e['bot']) for e in st.session_state.history[-5:]]
     answer_text = get_llm_response(user_message, context=context_text)
-    
+
     st.session_state.history.append({
         "user": user_message,
         "bot": answer_text,
@@ -176,10 +179,9 @@ if st.session_state.disease_detected:
         "Information": [info["symptoms"], info["advice"], info["vaccination"], info["doctor_alert"], info["severity"]]
     })
     
-    # Display table
     st.table(dashboard_df)
     
-    # Color-coded severity
+    # Highlight severity
     st.markdown(
         f"<p style='font-weight:bold'>Severity: <span style='color:{severity_color.get(info['severity'],'black')}'>{info['severity']}</span></p>",
         unsafe_allow_html=True
