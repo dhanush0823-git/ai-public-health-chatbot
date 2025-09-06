@@ -22,6 +22,7 @@ if "disease_context" not in st.session_state:
     st.session_state.disease_context = None
 
 if "api_key" not in st.session_state:
+    # Use environment variable as default, can be updated in sidebar
     st.session_state.api_key = os.getenv("OPENAI_API_KEY", "")
 
 # ---------------------------
@@ -34,13 +35,17 @@ except ImportError:
     st.stop()
 
 # ---------------------------
-# Sidebar for API key
+# Sidebar for API key and user info
 # ---------------------------
 with st.sidebar:
     st.header("👤 Patient Info / API Key")
     st.session_state.user_name = st.text_input("Your Name", value=st.session_state.user_name)
+    
     if not st.session_state.api_key:
-        st.session_state.api_key = st.text_input("Enter OpenAI API Key", type="password")
+        st.session_state.api_key = st.text_input(
+            "Enter OpenAI API Key (saved for session)", 
+            type="password"
+        )
 
     if st.button("🗑 Clear chat"):
         st.session_state.history = []
@@ -59,9 +64,6 @@ client = openai.OpenAI(api_key=st.session_state.api_key)
 # LLM RESPONSE FUNCTION (New API)
 # ---------------------------
 def get_llm_response(user_message, context=None):
-    """
-    Generates health advice using LLM with context awareness (OpenAI >=1.0.0)
-    """
     prompt = f"""
 You are a professional and friendly health assistant.
 Analyze symptoms, give reassurance for mild issues, preventive advice, vaccination tips, and doctor alerts.
