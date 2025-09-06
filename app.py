@@ -3,7 +3,6 @@ import streamlit as st
 from datetime import datetime
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import pandas as pd
-from fpdf import FPDF
 
 # ---------------------------
 # CONFIG
@@ -24,7 +23,7 @@ if "welcome_shown" not in st.session_state:
     st.session_state.welcome_shown = False
 
 # ---------------------------
-# Disease Dictionary
+# Disease Dictionary (known diseases for dashboard)
 # ---------------------------
 DISEASE_KB = {
     "covid": {
@@ -37,7 +36,7 @@ DISEASE_KB = {
     "dengue": {
         "symptoms": "High fever, severe headache, pain behind eyes, muscle and joint pains, nausea, vomiting.",
         "advice": "Rest, stay hydrated, avoid aspirin, monitor platelet count.",
-        "vaccination": "No widely used vaccine for all age groups, consult doctor if travel history present.",
+        "vaccination": "No widely used vaccine for all age groups; consult doctor if travel history present.",
         "doctor_alert": "Seek immediate medical attention if bleeding or severe pain occurs.",
         "severity": "Moderate"
     },
@@ -46,6 +45,27 @@ DISEASE_KB = {
         "advice": "Rest, drink warm fluids, maintain hygiene.",
         "vaccination": "Flu vaccine recommended annually.",
         "doctor_alert": "Consult doctor if symptoms worsen or persist beyond 7 days.",
+        "severity": "Mild"
+    },
+    "malaria": {
+        "symptoms": "Fever, chills, sweating, headache, nausea, vomiting.",
+        "advice": "Rest, stay hydrated, take prescribed antimalarial drugs.",
+        "vaccination": "No widely available vaccine; consult doctor for prophylaxis.",
+        "doctor_alert": "Seek immediate medical attention if fever is high or persistent.",
+        "severity": "Moderate"
+    },
+    "fever": {
+        "symptoms": "High temperature, sweating, fatigue.",
+        "advice": "Rest, stay hydrated, monitor temperature.",
+        "vaccination": "Depends on cause; consult doctor if unsure.",
+        "doctor_alert": "See a doctor if fever persists >3 days or is very high.",
+        "severity": "Mild"
+    },
+    "headache": {
+        "symptoms": "Pain in head or temples, sensitivity to light, fatigue.",
+        "advice": "Rest, stay hydrated, take OTC pain relievers if needed.",
+        "vaccination": "Not applicable.",
+        "doctor_alert": "See a doctor if headaches are severe or recurrent.",
         "severity": "Mild"
     }
 }
@@ -68,8 +88,8 @@ generator = load_model()
 # ---------------------------
 def get_llm_response(user_message, context=None):
     lower_msg = user_message.lower()
-
-    # Disease dictionary first
+    
+    # Check if any known disease is mentioned
     for disease, info in DISEASE_KB.items():
         if disease in lower_msg:
             st.session_state.disease_detected = disease
@@ -79,17 +99,19 @@ def get_llm_response(user_message, context=None):
                 f"**Vaccination tips:** {info['vaccination']}\n"
                 f"**Doctor Alert:** {info['doctor_alert']}"
             )
-
-    # Structured conversation context
+    
+    # Structured context for follow-ups
     structured_context = ""
     if context:
         structured_context = "\n".join([f"User: {u}\nAssistant: {b}" for u, b in context])
-
+    
+    # Prompt with repetition control
     prompt = f"""
 You are a professional, friendly health assistant.
-Analyze symptoms, provide preventive advice, vaccination tips, and doctor alerts.
-Avoid repeating sentences and giving unrealistic suggestions (like 'use a stethoscope at home').
-Use previous conversation context for follow-ups.
+- Analyze symptoms, provide preventive advice, vaccination tips, and doctor alerts.
+- Avoid repeating sentences or giving unrealistic suggestions (like 'use a stethoscope at home').
+- Use previous conversation context to answer follow-ups accurately.
+- Be concise, clear, and realistic.
 
 Previous conversation:
 {structured_context}
@@ -114,16 +136,6 @@ with st.sidebar:
         st.session_state.disease_detected = None
         st.session_state.welcome_shown = False
         st.rerun()
-    if st.button("📄 Export Chat as PDF"):
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        for entry in st.session_state.history:
-            pdf.multi_cell(0, 10, f"{entry['name']}: {entry['user']}")
-            pdf.multi_cell(0, 10, f"Bot: {entry['bot']}\n")
-        pdf_file = "chat_history.pdf"
-        pdf.output(pdf_file)
-        st.success(f"PDF saved: {pdf_file}")
 
 # ---------------------------
 # Main UI
@@ -166,7 +178,7 @@ if user_message:
     })
 
 # ---------------------------
-# Render Chat (ChatGPT style)
+# Render Chat
 # ---------------------------
 for entry in st.session_state.history:
     with st.chat_message("user"):
