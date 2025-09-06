@@ -13,16 +13,21 @@ st.set_page_config(page_title="Crafter's", layout="centered")
 APP_TITLE = "🩺 Crafter's — AI Health Chatbot"
 
 # ---------------------------
-# SESSION STATE INIT & NORMALIZE
+# SESSION STATE INIT
 # ---------------------------
 if "user_name" not in st.session_state:
     st.session_state.user_name = "Guest"
 
 if "history" not in st.session_state:
-    st.session_state.history = []  # list of dicts: {"user":..., "bot":..., "name":..., "time":...}
+    st.session_state.history = []
 
+if "disease_context" not in st.session_state:
+    st.session_state.disease_context = None  # Tracks last detected disease
+
+# ---------------------------
+# NORMALIZE HISTORY
+# ---------------------------
 def _normalize_history():
-    """Make sure history entries are dicts with at least 'user' and 'bot' keys."""
     normalized: List[Dict[str, Any]] = []
     for entry in st.session_state.history:
         try:
@@ -52,9 +57,6 @@ FAQ_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-ch
 VACCINE_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/refs/heads/main/vaccination.csv"
 OUTBREAK_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/refs/heads/main/outbreak.csv"
 
-# ---------------------------
-# ROBUST CSV LOADER
-# ---------------------------
 @st.cache_data
 def load_dataset(url: str, category: str) -> pd.DataFrame:
     try:
@@ -74,8 +76,7 @@ faq_df = load_dataset(FAQ_URL, "Health FAQ")
 vaccine_df = load_dataset(VACCINE_URL, "Vaccination")
 outbreak_df = load_dataset(OUTBREAK_URL, "Outbreak")
 
-kb = pd.concat([faq_df, vaccine_df, outbreak_df], ignore_index=True).dropna(subset=["question", "answer"])
-kb = kb.reset_index(drop=True)
+kb = pd.concat([faq_df, vaccine_df, outbreak_df], ignore_index=True).dropna(subset=["question", "answer"]).reset_index(drop=True)
 
 # ---------------------------
 # EMBEDDING MODEL
@@ -94,21 +95,49 @@ if not kb.empty:
     kb_embeddings = compute_embeddings(kb["question"].tolist())
 
 # ---------------------------
-# ANSWER FUNCTION
+# DISEASE AWARENESS LOGIC
 # ---------------------------
-def get_answer_from_kb(query: str) -> str:
-    if kb.empty or kb_embeddings is None:
-        return "⚠️ Knowledge base not available. Please check the dataset."
-    try:
-        q_emb = embedder.encode(query, convert_to_tensor=True)
-        scores = util.pytorch_cos_sim(q_emb, kb_embeddings)[0]
-        best_idx = int(torch.argmax(scores).item())
-        best_score = float(scores[best_idx])
-        if best_score < 0.35:
-            return "❓ I couldn’t find a confident answer. Please rephrase your question."
-        return str(kb.loc[best_idx, "answer"])
-    except Exception as e:
-        return f"Error retrieving answer: {e}"
+DISEASE_SYMPTOMS = {
+    "dengue": ["fever", "headache", "joint pain", "tired", "drowsy", "itching"],
+    "cold": ["cold", "cough", "sneeze", "runny nose", "tired"],
+    "flu": ["fever", "chills", "headache", "body pain", "cough"]
+}
+
+def detect_disease(query: str) -> str:
+    query_lower = query.lower()
+    for disease, symptoms in DISEASE_SYMPTOMS.items():
+        if any(symptom in query_lower for symptom in symptoms):
+            return disease
+    return None
+
+def generate_advisory(query: str) -> str:
+    disease = detect_disease(query)
+    if disease:
+        st.session_state.disease_context = disease
+        symptoms = ", ".join(DISEASE_SYMPTOMS[disease])
+        advice = f"🩺 It seems like you may have {disease}. Common symptoms include: {symptoms}.\n"
+        advice += "💡 General advice: Rest, stay hydrated, and monitor your symptoms.\n"
+        advice += "💉 Ensure you are up-to-date on relevant vaccinations.\n"
+        advice += "⚠️ If symptoms worsen or persist, consult a doctor immediately."
+        return advice
+    elif st.session_state.disease_context:
+        disease = st.session_state.disease_context
+        advice = f"🩺 Your symptoms may be related to {disease}. Please follow the previous guidance."
+        return advice
+    else:
+        # fallback to KB
+        if kb.empty or kb_embeddings is None:
+            return "⚠️ Knowledge base not available."
+        try:
+            q_emb = embedder.encode(query, convert_to_tensor=True)
+            scores = util.pytorch_cos_sim(q_emb, kb_embeddings)[0]
+            best_idx = int(torch.argmax(scores).item())
+            best_score = float(scores[best_idx])
+            if best_score < 0.35:
+                return "❓ I couldn’t find a confident answer. Please rephrase your question."
+            return str(kb.loc[best_idx, "answer"])
+        except Exception as e:
+            return f"Error retrieving answer: {e}"
 
 # ---------------------------
 # UI HEADER + SIDEBAR
@@ -121,6 +150,7 @@ with st.sidebar:
     st.session_state.user_name = st.text_input("Your Name", value=st.session_state.user_name)
     if st.button("🗑 Clear chat"):
         st.session_state.history = []
+        st.session_state.disease_context = None
         st.rerun()
 
 # ---------------------------
@@ -134,7 +164,7 @@ except Exception:
 
 if user_message:
     name_at_time = st.session_state.user_name or "Guest"
-    answer_text = get_answer_from_kb(user_message)
+    answer_text = generate_advisory(user_message)
     entry = {"user": str(user_message), "bot": str(answer_text), "name": name_at_time, "time": datetime.utcnow().isoformat()}
     st.session_state.history.append(entry)
 
@@ -147,7 +177,7 @@ def render_history():
             f"""
             <div style='text-align:center; padding:20px;'>
                 <h3>👋 Welcome {st.session_state.user_name}!</h3>
-                <p>I’m <b>Crafter's</b>,AI assistant for:</p>
+                <p>I’m <b>Crafter's</b>, AI assistant for:</p>
                 <ul style='text-align:left; max-width:500px; margin:auto;'>
                     <li>🩺 Health FAQs</li>
                     <li>💉 Vaccination details</li>
@@ -160,9 +190,12 @@ def render_history():
         )
         return
 
+    # Show welcome only once
+    welcome_displayed = False
     for entry in st.session_state.history:
-        if not isinstance(entry, dict):
-            continue
+        if not welcome_displayed:
+            st.markdown(f"👋 Welcome back, **{st.session_state.user_name}**!")
+            welcome_displayed = True
         user_txt = entry.get("user", "")
         bot_txt = entry.get("bot", "⚠️ No answer available.")
         name = entry.get("name", st.session_state.user_name or "Guest")
