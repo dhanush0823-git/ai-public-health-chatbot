@@ -1,2 +1,5 @@
 streamlit
-gpt4all
+transformers
+torch
+pandas
+fpdf
