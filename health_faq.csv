@@ -1,4 +1,21 @@
-question,answer
-What are the symptoms of dengue?,High fever, headache, joint pain, rash. Seek medical help if severe.
-How to prevent malaria?,Use mosquito nets, remove stagnant water, and seek medical advice.
-What are common signs of tuberculosis?,Persistent cough, fever, night sweats, weight loss.
+question,answer,category
+What are the symptoms of COVID-19?,Common symptoms include fever, cough, fatigue, and loss of taste or smell.,Health FAQ
+How often should I wash my hands?,Wash your hands with soap and water for at least 20 seconds, several times a day.,Health FAQ
+What is the normal body temperature?,Normal body temperature is around 98.6°F (37°C).,Health FAQ
+How much water should I drink daily?,On average, 2–3 liters per day is recommended, depending on activity and climate.,Health FAQ
+What should I do if I have a fever?,Rest, drink fluids, and monitor symptoms. Seek medical advice if it persists.,Health FAQ
+How many hours of sleep do adults need?,Most adults need 7–9 hours of sleep per night.,Health FAQ
+What are signs of dehydration?,Thirst, dry mouth, dark urine, fatigue, and dizziness are common signs.,Health FAQ
+How can I boost my immunity naturally?,Eat a balanced diet, exercise regularly, sleep well, and manage stress.,Health FAQ
+What causes high blood pressure?,Factors include high salt intake, obesity, stress, genetics, and lack of exercise.,Health FAQ
+What foods are good for the heart?,Fruits, vegetables, whole grains, nuts, and fish rich in omega-3.,Health FAQ
+How often should I exercise?,At least 150 minutes of moderate activity or 75 minutes of intense activity weekly.,Health FAQ
+What is a balanced diet?,A balanced diet includes carbohydrates, proteins, healthy fats, vitamins, and minerals.,Health FAQ
+Is it normal to feel stressed?,Yes, but chronic stress can affect health. Relaxation techniques can help.,Health FAQ
+What should I do for a headache?,Stay hydrated, rest, and avoid screens. If persistent, consult a doctor.,Health FAQ
+How can I improve mental health?,Practice mindfulness, stay active, talk to friends/family, and seek help when needed.,Health FAQ
+What are early signs of diabetes?,Increased thirst, frequent urination, fatigue, and slow wound healing.,Health FAQ
+How can I maintain healthy eyesight?,Eat vitamin-rich foods, limit screen time, and get regular eye checkups.,Health FAQ
+Is skipping breakfast unhealthy?,Yes, it may affect energy and metabolism. A healthy breakfast is recommended.,Health FAQ
+What is BMI?,BMI (Body Mass Index) is a measure of body fat based on height and weight.,Health FAQ
+When should I visit a doctor?,If you have persistent symptoms, severe pain, or unusual health changes.,Health FAQ
