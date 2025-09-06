@@ -1,6 +1,8 @@
+# app.py
 import streamlit as st
 from datetime import datetime
-from gpt4all import GPT4All
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+import torch
 
 # ---------------------------
 # CONFIG
@@ -21,13 +23,17 @@ if "disease_context" not in st.session_state:
     st.session_state.disease_context = None
 
 # ---------------------------
-# Load GPT4All model
+# Load model and tokenizer
 # ---------------------------
 @st.cache_resource
 def load_model():
-    return GPT4All("ggml-gpt4all-j-v1.3-groovy")  # downloads automatically first run
+    model_name = "tiiuae/falcon-7b-instruct"  # smaller instruct model
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
+    nlp = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=200)
+    return nlp
 
-model = load_model()
+generator = load_model()
 
 # ---------------------------
 # LLM RESPONSE FUNCTION
@@ -43,8 +49,8 @@ User Name: {st.session_state.user_name}
     prompt += f"User: {user_message}\nAssistant:"
 
     try:
-        response = model.generate(prompt)
-        return response
+        response = generator(prompt)
+        return response[0]["generated_text"].split("Assistant:")[-1].strip()
     except Exception as e:
         return f"⚠️ Error generating response: {e}"
 
@@ -64,7 +70,6 @@ with st.sidebar:
 # ---------------------------
 user_message = st.chat_input("Ask about health, vaccination, or outbreaks...")
 if user_message:
-    # Get last 5 messages as context
     context_text = "\n".join([f"{e['user']}: {e['bot']}" for e in st.session_state.history[-5:]])
     answer_text = get_llm_response(user_message, context=context_text)
     
