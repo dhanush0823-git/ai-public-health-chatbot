@@ -1,7 +1,16 @@
 # app.py
 import streamlit as st
 from datetime import datetime
-import openai
+import os
+
+# ---------------------------
+# Check if openai is installed
+# ---------------------------
+try:
+    import openai
+except ImportError:
+    st.error("The 'openai' package is not installed. Please add it to requirements.txt or run 'pip install openai'.")
+    st.stop()
 
 # ---------------------------
 # CONFIG
@@ -22,10 +31,18 @@ if "disease_context" not in st.session_state:
     st.session_state.disease_context = None
 
 # ---------------------------
-# OPENAI LLM FUNCTION
+# OPENAI API KEY
 # ---------------------------
-openai.api_key = "YOUR_OPENAI_API_KEY"  # replace with your key
+# Recommended: set environment variable OPENAI_API_KEY in your system or Streamlit secrets
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
+if not openai.api_key:
+    st.warning("⚠️ OpenAI API key not set. Please set the OPENAI_API_KEY environment variable.")
+    st.stop()
+
+# ---------------------------
+# LLM RESPONSE FUNCTION
+# ---------------------------
 def get_llm_response(user_message, context=None):
     """
     Generates health advice using LLM with context awareness
@@ -44,12 +61,15 @@ User Name: {st.session_state.user_name}
         prompt += f"Previous conversation context: {context}\n"
     prompt += f"User: {user_message}\nAssistant:"
 
-    response = openai.ChatCompletion.create(
-        model="gpt-5-mini",
-        messages=[{"role": "system", "content": prompt}],
-        temperature=0.7
-    )
-    return response.choices[0].message['content']
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-5-mini",
+            messages=[{"role": "system", "content": prompt}],
+            temperature=0.7
+        )
+        return response.choices[0].message['content']
+    except Exception as e:
+        return f"⚠️ Error generating response: {e}"
 
 # ---------------------------
 # UI HEADER + SIDEBAR
@@ -75,8 +95,8 @@ except Exception:
     user_message = st.text_input("Ask about health, vaccination, or outbreaks:")
 
 if user_message:
-    # Collect previous conversation as context
-    context_text = "\n".join([f"{e['user']}: {e['bot']}" for e in st.session_state.history[-5:]])  # last 5 messages
+    # Collect last 5 messages as context
+    context_text = "\n".join([f"{e['user']}: {e['bot']}" for e in st.session_state.history[-5:]])
     answer_text = get_llm_response(user_message, context=context_text)
     
     entry = {
