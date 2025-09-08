@@ -32,9 +32,10 @@ if "mode" not in st.session_state:
 # ---------------------------
 # DATASET LOADER
 # ---------------------------
-FAQ_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/refs/heads/main/health_faq.csv"
-VACCINE_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/refs/heads/main/vaccination.csv"
-OUTBREAK_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/refs/heads/main/outbreak.csv"
+FAQ_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/health_faq.csv"
+VACCINE_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/vaccination.csv"
+OUTBREAK_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/outbreak.csv"
+
 
 @st.cache_data
 def load_dataset(url: str, category: str) -> pd.DataFrame:
