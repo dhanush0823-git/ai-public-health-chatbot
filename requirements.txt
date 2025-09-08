@@ -1,5 +1,5 @@
 streamlit
-transformers
-torch
 pandas
-fpdf
+torch
+transformers
+sentence-transformers
