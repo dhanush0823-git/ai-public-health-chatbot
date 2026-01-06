@@ -34,7 +34,7 @@ if "mode" not in st.session_state:
 # ---------------------------
 # DATASET URLS
 # ---------------------------
-FAQ_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/healthfaq.csv"
+FAQ_URL = "https://github.com/dhanush0823-git/ai-public-health-chatbot/blob/main/health_faq.csv"
 VACCINE_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/vaccination.csv"
 OUTBREAK_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/outbreak.csv"
 
