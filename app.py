@@ -2,8 +2,10 @@
 import streamlit as st
 import pandas as pd
 import torch
+import requests
+from io import StringIO
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict
 
 # Embeddings
 from sentence_transformers import SentenceTransformer, util
@@ -30,30 +32,44 @@ if "mode" not in st.session_state:
     st.session_state.mode = "Dataset"
 
 # ---------------------------
-# DATASET LOADER
+# DATASET URLS
 # ---------------------------
 FAQ_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/healthfaq.csv"
 VACCINE_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/vaccination.csv"
 OUTBREAK_URL = "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/outbreak.csv"
 
-
-@st.cache_data
+# ---------------------------
+# SAFE DATASET LOADER (FIXED)
+# ---------------------------
+@st.cache_data(show_spinner="Loading datasets...")
 def load_dataset(url: str, category: str) -> pd.DataFrame:
     try:
-        df = pd.read_csv(url, encoding="utf-8", on_bad_lines="skip")
-    except Exception:
-        df = pd.read_csv(url, encoding="latin1", on_bad_lines="skip")
-    df.columns = [c.strip().lower() for c in df.columns]
-    if "question" not in df.columns or "answer" not in df.columns:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+
+        csv_data = StringIO(response.text)
+        df = pd.read_csv(csv_data, encoding="utf-8", on_bad_lines="skip")
+
+    except Exception as e:
+        st.error(f"❌ Failed to load {category} dataset: {e}")
         return pd.DataFrame(columns=["question", "answer", "category"])
+
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    if "question" not in df.columns or "answer" not in df.columns:
+        st.error(f"❌ Invalid schema in {category} dataset")
+        return pd.DataFrame(columns=["question", "answer", "category"])
+
     df["category"] = category
     return df[["question", "answer", "category"]]
 
+# Load datasets
 faq_df = load_dataset(FAQ_URL, "Health FAQ")
 vaccine_df = load_dataset(VACCINE_URL, "Vaccination")
 outbreak_df = load_dataset(OUTBREAK_URL, "Outbreak")
 
-kb = pd.concat([faq_df, vaccine_df, outbreak_df], ignore_index=True).dropna(subset=["question", "answer"])
+kb = pd.concat([faq_df, vaccine_df, outbreak_df], ignore_index=True)
+kb = kb.dropna(subset=["question", "answer"])
 
 # ---------------------------
 # EMBEDDING MODEL
@@ -64,62 +80,64 @@ def load_embedder():
 
 embedder = None
 kb_embeddings = None
+
 if not kb.empty:
     embedder = load_embedder()
+
     @st.cache_data
     def compute_embeddings(texts):
         return embedder.encode(texts, convert_to_tensor=True)
+
     kb_embeddings = compute_embeddings(kb["question"].tolist())
 
 def get_dataset_answer(query: str) -> str:
     if kb.empty or kb_embeddings is None:
         return "⚠️ Knowledge base not available."
-    try:
-        q_emb = embedder.encode(query, convert_to_tensor=True)
-        scores = util.pytorch_cos_sim(q_emb, kb_embeddings)[0]
-        best_idx = int(torch.argmax(scores).item())
-        best_score = float(scores[best_idx])
-        if best_score < 0.35:
-            return "❓ I couldn’t find a confident answer. Please rephrase your question."
-        return str(kb.loc[best_idx, "answer"])
-    except Exception as e:
-        return f"⚠️ Error: {e}"
+
+    q_emb = embedder.encode(query, convert_to_tensor=True)
+    scores = util.pytorch_cos_sim(q_emb, kb_embeddings)[0]
+    best_idx = int(torch.argmax(scores))
+    best_score = float(scores[best_idx])
+
+    if best_score < 0.35:
+        return "❓ I couldn’t find a confident answer. Please rephrase your question."
+
+    return str(kb.loc[best_idx, "answer"])
 
 # ---------------------------
-# LLM MODE (Optional, GPU needed)
+# LLM MODE (OPTIONAL)
 # ---------------------------
 @st.cache_resource
 def load_llm():
-    model_name = "distilgpt2"  # ✅ lightweight fallback; replace with Vicuna if you have GPU
+    model_name = "distilgpt2"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(model_name)
     return pipeline("text-generation", model=model, tokenizer=tokenizer)
 
 llm_pipeline = None
+
 def get_llm_answer(query: str, context: List[Dict[str, str]]) -> str:
     global llm_pipeline
+
     if llm_pipeline is None:
         llm_pipeline = load_llm()
 
-    structured_context = "\n".join(
-        [f"User: {entry['user']}\nAssistant: {entry['bot']}" for entry in context[-5:]]
+    chat_context = "\n".join(
+        [f"User: {c['user']}\nAssistant: {c['bot']}" for c in context[-5:]]
     )
 
     prompt = f"""
 You are a helpful and safe medical assistant.
-Use the context if relevant.
 
 Context:
-{structured_context}
+{chat_context}
 
 User: {query}
-Assistant:"""
+Assistant:
+"""
 
-    try:
-        response = llm_pipeline(prompt, max_length=200, do_sample=True, temperature=0.7)
-        return response[0]["generated_text"].replace(prompt, "").strip()
-    except Exception as e:
-        return f"⚠️ LLM error: {e}"
+    response = llm_pipeline(prompt, max_length=200, do_sample=True, temperature=0.7)
+    return response[0]["generated_text"].replace(prompt, "").strip()
 
 # ---------------------------
 # SIDEBAR
@@ -128,6 +146,7 @@ with st.sidebar:
     st.header("⚙️ Settings")
     st.session_state.user_name = st.text_input("Your Name", value=st.session_state.user_name)
     st.session_state.mode = st.radio("Answering Mode:", ["Dataset", "LLM"])
+
     if st.button("🗑 Clear chat"):
         st.session_state.history = []
         st.experimental_rerun()
