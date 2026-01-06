@@ -1,5 +1,6 @@
 streamlit
 pandas
 torch
-transformers
 sentence-transformers
+transformers
+requests
