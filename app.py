@@ -47,23 +47,27 @@ def load_dataset(url: str, category: str) -> pd.DataFrame:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
 
-        csv_data = StringIO(response.text)
-        df = pd.read_csv(csv_data, encoding="utf-8", on_bad_lines="skip")
+        df = pd.read_csv(
+            StringIO(response.text),
+            encoding="utf-8",
+            on_bad_lines="skip"
+        )
 
     except Exception as e:
-        st.error(f"❌ Failed to load {category} dataset: {e}")
+        st.error(f"❌ Failed to load {category}: {e}")
         return pd.DataFrame(columns=["question", "answer", "category"])
 
     df.columns = [c.strip().lower() for c in df.columns]
 
     if "question" not in df.columns or "answer" not in df.columns:
-        st.error(f"❌ Invalid schema in {category} dataset")
         return pd.DataFrame(columns=["question", "answer", "category"])
 
     df["category"] = category
     return df[["question", "answer", "category"]]
 
-# Load datasets
+# ---------------------------
+# LOAD DATASETS
+# ---------------------------
 faq_df = load_dataset(FAQ_URL, "Health FAQ")
 vaccine_df = load_dataset(VACCINE_URL, "Vaccination")
 outbreak_df = load_dataset(OUTBREAK_URL, "Outbreak")
@@ -181,4 +185,4 @@ for entry in st.session_state.history:
     with st.chat_message("user"):
         st.markdown(f"**{st.session_state.user_name}:** {entry['user']}")
     with st.chat_message("assistant"):
-        st.markdown(entry['bot'])
+        st.markdown(entry["bot"])
