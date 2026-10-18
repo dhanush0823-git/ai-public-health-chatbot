@@ -15,22 +15,17 @@ from google.genai import types
 # PAGE CONFIG
 # ============================================================
 st.set_page_config(
-    page_title="Crafter's | Health Assistant",
+    page_title="AI Health Assistant",
     page_icon="🩺",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-APP_NAME = "Crafter's Health Assistant"
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-# Fallbacks are attempted only when a model is unavailable to this API key.
-MODEL_FALLBACKS = [
-    MODEL_NAME,
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-flash-latest",
-]
+APP_NAME = "Health Assistant"
+# Optionally set GEMINI_MODEL in Streamlit Secrets to pin a specific model.
+# Otherwise, discover a text-generation model available to this API key.
+MODEL_NAME = os.getenv("GEMINI_MODEL", "").strip()
+
 
 DATASET_URLS = {
     "Health FAQ": (
@@ -48,24 +43,33 @@ DATASET_URLS = {
 }
 
 SYSTEM_INSTRUCTION = """
-You are Crafter's Health Assistant, a clear, empathetic public-health
-information assistant.
+You are Health Assistant, an AI assistant dedicated ONLY to health and healthcare topics.
 
-You can explain general health topics, vaccination, disease prevention,
-and public-health information. Use relevant supplied knowledge-base context,
-but do not assume every retrieved entry is relevant or necessarily current.
+IN-SCOPE topics include diseases, symptoms, medical conditions, health education,
+wellness, nutrition when health-related, mental health, first aid, prevention,
+vaccination, public health, medical tests, healthcare systems, and health-related
+questions about medicines.
 
-Safety:
-- You are not a doctor and cannot diagnose or replace a healthcare professional.
-- Do not invent facts, statistics, sources, outbreak updates, or vaccine schedules.
-- Be clear when information is uncertain or the provided context is insufficient.
+OUT-OF-SCOPE RULE — MUST FOLLOW:
+If the user's request is not meaningfully related to health, disease, healthcare,
+medicine, wellness, or public health, do NOT answer the actual question, do NOT
+provide facts about the unrelated topic, and do NOT continue the unrelated discussion.
+Reply with this message, exactly:
+"I'm Health Assistant, designed to help with health, diseases, symptoms, prevention, vaccination, and public health. Your question isn't related to my purpose, but I'm happy to help with a health-related question."
+
+If the request is ambiguous, ask one short clarification to determine whether it is health-related.
+A person's name alone does not make a question health-related. For example, "Who is Virat Kohli?"
+is out of scope and must receive the exact out-of-scope message above.
+
+MEDICAL SAFETY:
+- Do not claim to diagnose or replace a qualified healthcare professional.
+- Do not invent medical facts, statistics, sources, outbreak updates, or vaccine schedules.
+- Clearly communicate uncertainty when evidence or context is insufficient.
 - Do not recommend starting, stopping, or changing prescription medicines.
-- Encourage a qualified healthcare professional for individual medical decisions.
-- If the user describes potentially life-threatening symptoms (such as severe
-  breathing difficulty, chest pain, stroke symptoms, unconsciousness, or severe
-  bleeding), advise immediate emergency medical care.
-- Keep responses concise, readable, and compassionate. Use headings or bullets
-  when helpful.
+- Encourage professional care for individual medical decisions.
+- For potentially life-threatening symptoms (severe breathing difficulty, chest pain,
+  stroke symptoms, unconsciousness, or severe bleeding), advise immediate emergency care.
+- Keep in-scope answers clear, compassionate, and reasonably concise.
 """
 
 
@@ -451,6 +455,150 @@ def get_gemini_client(api_key: str) -> genai.Client:
     return genai.Client(api_key=api_key)
 
 
+def available_gemini_models(client: genai.Client) -> list[str]:
+    """Discover models available to this API key instead of guessing model IDs."""
+    candidates = []
+
+    if MODEL_NAME:
+        candidates.append(MODEL_NAME)
+
+    try:
+        for model in client.models.list():
+            name = str(getattr(model, "name", "") or "").strip()
+            actions = getattr(model, "supported_actions", None) or []
+            actions = [str(action).lower() for action in actions]
+
+            if name.startswith("models/"):
+                name = name.split("/", 1)[1]
+
+            lower_name = name.lower()
+            if not lower_name.startswith("gemini"):
+                continue
+            if any(term in lower_name for term in ("embedding", "aqa")):
+                continue
+            if actions and not any("generatecontent" in action for action in actions):
+                continue
+
+            candidates.append(name)
+
+    except Exception as exc:
+        print(
+            f"Could not list Gemini models ({type(exc).__name__}): "
+            f"{str(exc)[:250]}"
+        )
+
+    models = list(dict.fromkeys(candidates))
+
+    if not MODEL_NAME:
+        models.sort(
+            key=lambda name: (
+                "flash" not in name.lower(),
+                "pro" in name.lower(),
+                name.lower(),
+            )
+        )
+
+    return models
+
+
+def call_gemini(
+    client: genai.Client,
+    contents: list,
+    system_instruction: str,
+    temperature: float = 0.1,
+) -> str:
+    models = available_gemini_models(client)
+
+    if not models:
+        raise RuntimeError(
+            "No Gemini text-generation model was listed for this API key. "
+            "Check API access or set GEMINI_MODEL to a model available to this project."
+        )
+
+    last_error = None
+
+    for model_name in models:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=temperature,
+                    top_p=0.9,
+                    max_output_tokens=1000,
+                ),
+            )
+
+            answer = (response.text or "").strip()
+            if answer:
+                return answer
+
+        except Exception as exc:
+            last_error = exc
+            message = str(exc).lower()
+
+            # Retry another model only when this model is unavailable.
+            if any(term in message for term in (
+                "404", "not found", "not supported", "unknown model",
+                "model is not available", "unsupported model"
+            )):
+                continue
+            raise
+
+    if last_error:
+        raise last_error
+
+    raise RuntimeError("Gemini returned an empty response for available models.")
+
+
+OUT_OF_SCOPE_REPLY = (
+    "I'm Health Assistant, designed to help with health, diseases, symptoms, "
+    "prevention, vaccination, and public health. Your question isn't related "
+    "to my purpose, but I'm happy to help with a health-related question."
+)
+
+SCOPE_CLASSIFIER_INSTRUCTION = """
+You are a strict topic classifier for a health-only assistant.
+Classify the latest user message as HEALTH_RELATED or OUT_OF_SCOPE.
+
+HEALTH_RELATED includes medical conditions, symptoms, wellness, nutrition for health,
+mental health, medicine, first aid, vaccination, disease prevention, public health,
+and healthcare services.
+
+OUT_OF_SCOPE includes sports, celebrities, entertainment, general trivia, coding,
+math, politics, travel, and topics not meaningfully related to health.
+
+Classify the user's actual intent. A person's name or a health-related word mentioned
+in passing does not automatically make the request health-related.
+Return exactly one word: HEALTH_RELATED or OUT_OF_SCOPE.
+"""
+
+
+def is_health_related(client: genai.Client, user_message: str) -> bool:
+    """Classify the request before generating an answer."""
+    contents = [
+        types.Content(
+            role="user",
+            parts=[
+                types.Part.from_text(
+                    text=f"Classify this user message:\n{user_message}"
+                )
+            ],
+        )
+    ]
+
+    result = call_gemini(
+        client=client,
+        contents=contents,
+        system_instruction=SCOPE_CLASSIFIER_INSTRUCTION,
+        temperature=0,
+    )
+
+    # Fail closed if classification is unclear.
+    return result.strip().upper().startswith("HEALTH_RELATED")
+
+
 def generate_answer(
     user_message: str,
     history: list[dict[str, Any]],
@@ -465,102 +613,66 @@ def generate_answer(
             "`Gemini_api` is present and saved, then reboot the app."
         )
 
-    context = (
-        retrieve_context(user_message)
-        if use_knowledge_base
-        else "Knowledge-base retrieval is disabled by the user."
-    )
+    try:
+        client = get_gemini_client(api_key)
 
-    contents = []
+        # Enforce the health-only boundary before generating an answer.
+        if not is_health_related(client, user_message):
+            return OUT_OF_SCOPE_REPLY
 
-    # Send recent prior turns, excluding the current user message.
-    for turn in history[-8:]:
-        previous_user = str(turn.get("user", "")).strip()
-        previous_bot = str(turn.get("bot", "")).strip()
+        context = (
+            retrieve_context(user_message)
+            if use_knowledge_base
+            else "Knowledge-base retrieval is disabled by the user."
+        )
 
-        if previous_user and previous_bot:
-            contents.append(
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=previous_user)],
+        contents = []
+
+        # Add recent conversation turns for continuity.
+        for turn in history[-8:]:
+            previous_user = str(turn.get("user", "")).strip()
+            previous_bot = str(turn.get("bot", "")).strip()
+
+            if previous_user and previous_bot:
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=previous_user)],
+                    )
                 )
-            )
-            contents.append(
-                types.Content(
-                    role="model",
-                    parts=[types.Part.from_text(text=previous_bot)],
+                contents.append(
+                    types.Content(
+                        role="model",
+                        parts=[types.Part.from_text(text=previous_bot)],
+                    )
                 )
-            )
 
-    prompt = f"""
+        prompt = f"""
 Relevant project knowledge-base context:
 {context}
 
 Latest user question:
 {user_message}
 
-Answer the latest question. Use the context only when it is relevant.
-If it does not answer the question, be transparent about uncertainty.
+Answer the latest question only if it is health-related.
+Use the supplied context only when relevant. It may be incomplete or irrelevant.
+If it does not answer the question, use general health knowledge carefully and
+communicate uncertainty. Do not force irrelevant CSV entries into the answer.
 """
 
-    contents.append(
-        types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=prompt)],
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=prompt)],
+            )
         )
-    )
 
-    try:
-        client = get_gemini_client(api_key)
-        last_error = None
-
-        # Model availability can vary by API key/project. Try the preferred
-        # model first, then supported alternatives before returning an error.
-        tried = []
-        for model_name in dict.fromkeys(MODEL_FALLBACKS):
-            tried.append(model_name)
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        temperature=0.35,
-                        top_p=0.9,
-                        max_output_tokens=1000,
-                    ),
-                )
-
-                answer = (response.text or "").strip()
-                if answer:
-                    return answer
-
-                return (
-                    "Gemini returned an empty response. Please try asking "
-                    "your question another way."
-                )
-
-            except Exception as exc:
-                last_error = exc
-                message = str(exc).lower()
-
-                # Only try another model for model-not-found / unavailable errors.
-                if (
-                    "404" in message
-                    or "not found" in message
-                    or "not supported" in message
-                    or "unknown model" in message
-                ):
-                    continue
-
-                # Authentication, quota, and other errors are not fixed by
-                # switching model names, so stop and show the appropriate message.
-                raise
-
-        if last_error is not None:
-            raise last_error
-
-        return "No available Gemini model could be selected."
+        return call_gemini(
+            client=client,
+            contents=contents,
+            system_instruction=SYSTEM_INSTRUCTION,
+            temperature=0.25,
+        )
 
     except Exception as exc:
         message = str(exc).lower()
@@ -575,7 +687,7 @@ If it does not answer the question, be transparent about uncertainty.
         )):
             return (
                 "Gemini authentication failed. Verify that the key in "
-                "Streamlit Secrets is valid and that the API is enabled for it."
+                "Streamlit Secrets is valid and that the Gemini API is enabled."
             )
 
         if any(term in message for term in (
@@ -586,21 +698,19 @@ If it does not answer the question, be transparent about uncertainty.
                 "Check your API usage and try again later."
             )
 
-        if (
-            "404" in message
-            or "not found" in message
-            or "not supported" in message
-            or "unknown model" in message
-        ):
+        if any(term in message for term in (
+            "404", "not found", "not supported", "unknown model",
+            "no gemini text-generation model"
+        )):
             return (
-                "None of the configured Gemini model names is available to this API key. "
-                "Check the current Gemini API model list and your project's access. "
-                "Models attempted: " + ", ".join(dict.fromkeys(MODEL_FALLBACKS))
+                "I couldn't find an available Gemini text-generation model for this API key. "
+                "Check the models enabled for your Google AI project, or set `GEMINI_MODEL` "
+                "in Streamlit Secrets to a model ID available to your project."
             )
 
         return (
-            "Gemini couldn't complete this request. Check the app logs for "
-            "technical details, then verify model availability and API access."
+            "Gemini couldn't complete this request. Check the Streamlit app logs "
+            "for technical details, then verify model availability and API access."
         )
 
 
@@ -613,8 +723,8 @@ with st.sidebar:
         <div class="brand-row">
             <div class="brand-icon">🩺</div>
             <div>
-                <div class="brand-name">Crafter's</div>
-                <div class="brand-caption">AI Health Assistant</div>
+                <div class="brand-name">Health Assistant</div>
+                <div class="brand-caption">AI-powered health guidance</div>
             </div>
         </div>
         """,
@@ -666,7 +776,11 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    st.caption(f"Model: `{MODEL_NAME}`")
+    st.caption(
+        f"Preferred model: `{MODEL_NAME}`"
+        if MODEL_NAME
+        else "Model: automatically selected from those available to your API key"
+    )
 
     if st.button("Clear conversation", use_container_width=True):
         st.session_state.history = []
@@ -685,8 +799,8 @@ with st.sidebar:
 st.markdown(
     """
     <section class="hero">
-        <div class="eyebrow">Public health · Powered by Gemini</div>
-        <h1>A clearer way to<br>understand your health.</h1>
+        <div class="eyebrow">YOUR HEALTH, EXPLAINED · POWERED BY GEMINI</div>
+        <h1>Your health questions,<br>answered with clarity.</h1>
         <p>
             Ask questions about general health, vaccination, and public health.
             Get conversational explanations powered by Gemini, with relevant
@@ -696,6 +810,7 @@ st.markdown(
             <span class="hero-tag">✦ Gemini AI</span>
             <span class="hero-tag">▤ Project knowledge base</span>
             <span class="hero-tag">◉ Conversational answers</span>
+            <span class="hero-tag">✓ Health-focused responses</span>
         </div>
     </section>
     <div class="notice">
@@ -805,7 +920,7 @@ if user_message and user_message.strip():
 st.markdown(
     """
     <div class="footer-note">
-        Crafter's Health Assistant · General health education only<br>
+        Health Assistant · General health education only<br>
         AI-generated information can be incomplete or incorrect. Verify important
         medical information with a qualified professional.
     </div>
