@@ -22,7 +22,15 @@ st.set_page_config(
 )
 
 APP_NAME = "Crafter's Health Assistant"
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+# Fallbacks are attempted only when a model is unavailable to this API key.
+MODEL_FALLBACKS = [
+    MODEL_NAME,
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
+]
 
 DATASET_URLS = {
     "Health FAQ": (
@@ -504,25 +512,55 @@ If it does not answer the question, be transparent about uncertainty.
 
     try:
         client = get_gemini_client(api_key)
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
-                temperature=0.35,
-                top_p=0.9,
-                max_output_tokens=1000,
-            ),
-        )
+        last_error = None
 
-        answer = (response.text or "").strip()
-        if answer:
-            return answer
+        # Model availability can vary by API key/project. Try the preferred
+        # model first, then supported alternatives before returning an error.
+        tried = []
+        for model_name in dict.fromkeys(MODEL_FALLBACKS):
+            tried.append(model_name)
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        temperature=0.35,
+                        top_p=0.9,
+                        max_output_tokens=1000,
+                    ),
+                )
 
-        return (
-            "Gemini returned an empty response. Please try asking "
-            "your question another way."
-        )
+                answer = (response.text or "").strip()
+                if answer:
+                    return answer
+
+                return (
+                    "Gemini returned an empty response. Please try asking "
+                    "your question another way."
+                )
+
+            except Exception as exc:
+                last_error = exc
+                message = str(exc).lower()
+
+                # Only try another model for model-not-found / unavailable errors.
+                if (
+                    "404" in message
+                    or "not found" in message
+                    or "not supported" in message
+                    or "unknown model" in message
+                ):
+                    continue
+
+                # Authentication, quota, and other errors are not fixed by
+                # switching model names, so stop and show the appropriate message.
+                raise
+
+        if last_error is not None:
+            raise last_error
+
+        return "No available Gemini model could be selected."
 
     except Exception as exc:
         message = str(exc).lower()
@@ -537,7 +575,7 @@ If it does not answer the question, be transparent about uncertainty.
         )):
             return (
                 "Gemini authentication failed. Verify that the key in "
-                "Streamlit Secrets is valid and has access to the selected model."
+                "Streamlit Secrets is valid and that the API is enabled for it."
             )
 
         if any(term in message for term in (
@@ -548,10 +586,16 @@ If it does not answer the question, be transparent about uncertainty.
                 "Check your API usage and try again later."
             )
 
-        if "404" in message or "not found" in message:
+        if (
+            "404" in message
+            or "not found" in message
+            or "not supported" in message
+            or "unknown model" in message
+        ):
             return (
-                f"The model `{MODEL_NAME}` was not found or is unavailable "
-                "for this API key. Check the model name and your API access."
+                "None of the configured Gemini model names is available to this API key. "
+                "Check the current Gemini API model list and your project's access. "
+                "Models attempted: " + ", ".join(dict.fromkeys(MODEL_FALLBACKS))
             )
 
         return (
