@@ -233,7 +233,7 @@ def make_gemini_contents(
 
 
 def generate_answer(user_message: str, chat_history: list, use_kb: bool) -> str:
-    api_key = os.environ.get("Gemini_Api", "").strip()
+    api_key = os.environ.get("Gemini_api", "").strip()
     if not api_key:
         return (
             "Gemini API key is not configured. Set the `Gemini_Api` environment variable "
