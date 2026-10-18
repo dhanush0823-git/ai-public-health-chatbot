@@ -1,256 +1,519 @@
-"""
-Crafter's — AI Health Chatbot
-Gemini-powered public-health assistant with optional CSV knowledge-base retrieval.
-
-Environment:
-    Gemini_Api=your_gemini_api_key
-
-Run:
-    streamlit run app.py
-"""
-
 import os
-import html
-from datetime import datetime, timezone
+from datetime import datetime
 from io import StringIO
-from typing import Optional
 
 import pandas as pd
 import requests
 import streamlit as st
+
 from google import genai
 from google.genai import types
 
 
-# -------------------------------------------------------------------
-# PAGE CONFIG
-# -------------------------------------------------------------------
+# ============================================================
+# 1. CONFIGURATION
+# ============================================================
+
 st.set_page_config(
     page_title="Crafter's | AI Health Assistant",
     page_icon="🩺",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="expanded",
 )
 
 APP_TITLE = "Crafter's Health Assistant"
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 
-# Use the raw GitHub URL for CSV content (not the GitHub HTML page).
+MODEL_NAME = os.getenv(
+    "GEMINI_MODEL",
+    "gemini-flash-latest"
+)
+
+
+# ============================================================
+# 2. GEMINI API KEY
+# ============================================================
+
+def get_api_key():
+    """
+    Read the Gemini API key from Windows environment variables.
+
+    Supports:
+        Gemini_api
+        Gemini_Api
+        GEMINI_API_KEY
+    """
+
+    for key_name in (
+        "Gemini_api",
+        "Gemini_Api",
+        "GEMINI_API_KEY",
+    ):
+        value = os.environ.get(key_name)
+
+        if value and value.strip():
+            return value.strip()
+
+    return ""
+
+
+# ============================================================
+# 3. SESSION STATE
+# ============================================================
+
+if "user_name" not in st.session_state:
+    st.session_state.user_name = "Guest"
+
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+if "use_knowledge_base" not in st.session_state:
+    st.session_state.use_knowledge_base = True
+
+if "show_timestamps" not in st.session_state:
+    st.session_state.show_timestamps = False
+
+
+# ============================================================
+# 4. DATASET URLS
+# ============================================================
+
 DATASET_URLS = {
-    "Health FAQ": "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/health_faq.csv",
-    "Vaccination": "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/vaccination.csv",
-    "Outbreak": "https://raw.githubusercontent.com/dhanush0823-git/ai-public-health-chatbot/main/outbreak.csv",
+    "Health FAQ": (
+        "https://raw.githubusercontent.com/"
+        "dhanush0823-git/ai-public-health-chatbot/"
+        "main/health_faq.csv"
+    ),
+
+    "Vaccination": (
+        "https://raw.githubusercontent.com/"
+        "dhanush0823-git/ai-public-health-chatbot/"
+        "main/vaccination.csv"
+    ),
+
+    "Outbreak": (
+        "https://raw.githubusercontent.com/"
+        "dhanush0823-git/ai-public-health-chatbot/"
+        "main/outbreak.csv"
+    ),
 }
 
-SYSTEM_INSTRUCTION = """
-You are Crafter's Health Assistant, a careful, empathetic public-health information assistant.
-Your role is to provide general health education, explain vaccination and public-health topics,
-and summarize relevant information from the supplied knowledge-base context.
 
-Safety requirements:
-- You are not a doctor and must not claim to diagnose, prescribe, or replace professional care.
-- Do not make up medical facts, sources, statistics, vaccination schedules, or outbreak updates.
-- If the knowledge-base context does not support a specific local/current claim, say so clearly.
-- Give practical, general information and encourage the user to consult a qualified healthcare
-  professional for personal medical decisions.
-- Never recommend starting, stopping, or changing prescription medication without a clinician.
-- If symptoms suggest a possible emergency (for example, severe difficulty breathing, chest pain,
-  signs of stroke, severe bleeding, or loss of consciousness), advise contacting local emergency
-  services immediately.
-- Ask a short clarifying question when important details are missing; do not overstate certainty.
-- Keep answers clear, compassionate, and reasonably concise. Use bullets where they improve clarity.
-- Do not repeat personal or sensitive information unnecessarily.
-"""
+# ============================================================
+# 5. LOAD DATASETS
+# ============================================================
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_dataset(url, category):
 
-# -------------------------------------------------------------------
-# SESSION STATE
-# -------------------------------------------------------------------
-def init_session_state() -> None:
-    defaults = {
-        "user_name": "Guest",
-        "history": [],
-        "use_knowledge_base": True,
-        "show_timestamps": False,
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-
-init_session_state()
-
-
-# -------------------------------------------------------------------
-# DATASET LOADING
-# -------------------------------------------------------------------
-@st.cache_data(ttl=3600, show_spinner="Loading public-health knowledge base...")
-def load_dataset(url: str, category: str) -> pd.DataFrame:
-    """Load one CSV safely. An unavailable dataset won't stop the app."""
-    empty = pd.DataFrame(columns=["question", "answer", "category"])
+    empty_df = pd.DataFrame(
+        columns=[
+            "question",
+            "answer",
+            "category",
+        ]
+    )
 
     try:
-        response = requests.get(url, timeout=(5, 20))
+        response = requests.get(
+            url,
+            timeout=20,
+        )
+
         response.raise_for_status()
+
         df = pd.read_csv(
-            StringIO(response.content.decode("utf-8-sig", errors="replace")),
+            StringIO(
+                response.content.decode(
+                    "utf-8-sig",
+                    errors="replace",
+                )
+            ),
             on_bad_lines="skip",
         )
-    except (requests.RequestException, pd.errors.ParserError, UnicodeDecodeError):
-        return empty
+
+        df.columns = [
+            str(column).strip().lower()
+            for column in df.columns
+        ]
+
+        if not {
+            "question",
+            "answer",
+        }.issubset(df.columns):
+
+            return empty_df
+
+        df = df[
+            [
+                "question",
+                "answer",
+            ]
+        ].copy()
+
+        df["question"] = (
+            df["question"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        df["answer"] = (
+            df["answer"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        df = df[
+            (df["question"] != "")
+            & (df["answer"] != "")
+        ]
+
+        df["category"] = category
+
+        return df[
+            [
+                "question",
+                "answer",
+                "category",
+            ]
+        ]
+
     except Exception:
-        return empty
-
-    df.columns = [str(column).strip().lower() for column in df.columns]
-    if not {"question", "answer"}.issubset(df.columns):
-        return empty
-
-    df = df[["question", "answer"]].copy()
-    df["question"] = df["question"].fillna("").astype(str).str.strip()
-    df["answer"] = df["answer"].fillna("").astype(str).str.strip()
-    df = df[(df["question"] != "") & (df["answer"] != "")]
-    df["category"] = category
-    return df[["question", "answer", "category"]]
+        return empty_df
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_knowledge_base() -> pd.DataFrame:
-    frames = [load_dataset(url, category) for category, url in DATASET_URLS.items()]
-    frames = [frame for frame in frames if not frame.empty]
+def load_knowledge_base():
 
-    if not frames:
-        return pd.DataFrame(columns=["question", "answer", "category"])
+    datasets = []
 
-    kb = pd.concat(frames, ignore_index=True)
-    kb = kb.drop_duplicates(subset=["question", "answer"]).reset_index(drop=True)
-    return kb
+    for category, url in DATASET_URLS.items():
+
+        df = load_dataset(
+            url,
+            category,
+        )
+
+        if not df.empty:
+            datasets.append(df)
+
+    if not datasets:
+
+        return pd.DataFrame(
+            columns=[
+                "question",
+                "answer",
+                "category",
+            ]
+        )
+
+    knowledge_base = pd.concat(
+        datasets,
+        ignore_index=True,
+    )
+
+    knowledge_base = knowledge_base.drop_duplicates(
+        subset=[
+            "question",
+            "answer",
+        ]
+    )
+
+    return knowledge_base.reset_index(
+        drop=True
+    )
 
 
-kb = load_knowledge_base()
+# Load the datasets.
+
+with st.spinner("Loading health knowledge base..."):
+
+    kb = load_knowledge_base()
 
 
-def retrieve_context(query: str, max_items: int = 4) -> str:
-    """
-    Lightweight lexical retrieval that avoids downloading a local embedding model.
-    It uses question-token overlap as a small context selector; Gemini writes the answer.
-    """
+# ============================================================
+# 6. KNOWLEDGE BASE RETRIEVAL
+# ============================================================
+
+def retrieve_context(query, max_items=4):
+
     if kb.empty:
-        return "The CSV knowledge base is currently unavailable."
 
-    query_terms = {
-        token.lower().strip(".,!?;:()[]{}'\"")
-        for token in query.split()
-        if len(token.strip(".,!?;:()[]{}'\"")) > 2
-    }
+        return (
+            "The CSV knowledge base is unavailable."
+        )
+
+    def tokenize(text):
+
+        return {
+            word.strip(".,!?;:()[]{}'\"").lower()
+            for word in str(text).split()
+            if len(
+                word.strip(".,!?;:()[]{}'\"")
+            ) > 2
+        }
+
+    query_terms = tokenize(query)
+
     if not query_terms:
-        return "No directly matched knowledge-base entries were found."
 
-    ranked = []
+        return (
+            "No matching knowledge-base entries found."
+        )
+
+    results = []
+
     for _, row in kb.iterrows():
-        question = str(row["question"])
-        answer = str(row["answer"])
-        question_terms = {
-            token.lower().strip(".,!?;:()[]{}'\"")
-            for token in question.split()
-            if len(token.strip(".,!?;:()[]{}'\"")) > 2
-        }
-        answer_terms = {
-            token.lower().strip(".,!?;:()[]{}'\"")
-            for token in answer.split()
-            if len(token.strip(".,!?;:()[]{}'\"")) > 2
-        }
+
+        question = str(
+            row["question"]
+        )
+
+        answer = str(
+            row["answer"]
+        )
+
+        question_terms = tokenize(
+            question
+        )
+
+        answer_terms = tokenize(
+            answer
+        )
 
         if not question_terms:
             continue
 
-        question_overlap = len(query_terms & question_terms) / max(len(query_terms), 1)
-        answer_overlap = len(query_terms & answer_terms) / max(len(query_terms), 1)
-        score = (0.75 * question_overlap) + (0.25 * answer_overlap)
+        question_score = (
+            len(query_terms & question_terms)
+            / len(query_terms)
+        )
+
+        answer_score = (
+            len(query_terms & answer_terms)
+            / len(query_terms)
+        )
+
+        score = (
+            0.75 * question_score
+            + 0.25 * answer_score
+        )
 
         if score > 0:
-            ranked.append((score, question, answer, str(row["category"])))
 
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    selected = ranked[:max_items]
+            results.append(
+                (
+                    score,
+                    question,
+                    answer,
+                    str(row["category"]),
+                )
+            )
+
+    results.sort(
+        key=lambda item: item[0],
+        reverse=True,
+    )
+
+    selected = results[:max_items]
 
     if not selected:
-        return "No directly matched knowledge-base entries were found."
 
-    return "\n\n".join(
-        f"Category: {category}\nQuestion: {question}\nKnowledge-base answer: {answer}"
-        for _, question, answer, category in selected
+        return (
+            "No directly matching knowledge-base "
+            "entries were found."
+        )
+
+    context_parts = []
+
+    for score, question, answer, category in selected:
+
+        context_parts.append(
+            f"""
+Category: {category}
+
+Question: {question}
+
+Answer: {answer}
+"""
+        )
+
+    return "\n".join(context_parts)
+
+
+# ============================================================
+# 7. GEMINI CLIENT
+# ============================================================
+
+@st.cache_resource
+def get_gemini_client(api_key):
+
+    return genai.Client(
+        api_key=api_key
     )
 
 
-# -------------------------------------------------------------------
-# GEMINI CLIENT AND RESPONSE
-# -------------------------------------------------------------------
-@st.cache_resource
-def get_gemini_client(api_key: str):
-    return genai.Client(api_key=api_key)
+# ============================================================
+# 8. MEDICAL SAFETY INSTRUCTIONS
+# ============================================================
+
+SYSTEM_INSTRUCTION = """
+You are Crafter's Health Assistant, a helpful AI assistant
+specializing in general health education and public health.
+
+Your responsibilities include:
+- General health information.
+- Vaccination education.
+- Public health information.
+- Explaining health-related concepts.
+- Providing information using the supplied knowledge base.
+
+IMPORTANT SAFETY RULES:
+
+1. You are not a doctor.
+2. Do not claim to diagnose diseases.
+3. Do not invent medical facts, statistics, or sources.
+4. Use the supplied knowledge base when it is relevant.
+5. If the knowledge base does not support a specific claim,
+   clearly communicate uncertainty.
+6. Never recommend starting, stopping, or changing
+   prescription medication without professional guidance.
+7. Encourage users to consult qualified healthcare
+   professionals for personal medical decisions.
+8. For potentially life-threatening symptoms, such as
+   severe breathing difficulty, chest pain, stroke symptoms,
+   severe bleeding, or unconsciousness, advise seeking
+   emergency medical assistance immediately.
+9. Keep answers clear, professional, compassionate,
+   and easy to understand.
+10. Do not present general information as a personal diagnosis.
+"""
 
 
-def make_gemini_contents(
-    user_message: str,
-    chat_history: list,
-    context_text: str,
-) -> list:
-    """Convert recent app history into Gemini's multi-turn content format."""
+# ============================================================
+# 9. GEMINI RESPONSE GENERATION
+# ============================================================
+
+def generate_answer(
+    user_message,
+    chat_history,
+    use_knowledge_base=True,
+):
+
+    api_key = get_api_key()
+
+    # Check the API key.
+
+    if not api_key:
+
+        return (
+            "⚠️ Gemini API key not found.\n\n"
+            "Please verify that your Windows environment "
+            "variable is configured correctly.\n\n"
+            "Supported names:\n"
+            "- `Gemini_api`\n"
+            "- `Gemini_Api`\n"
+            "- `GEMINI_API_KEY`\n\n"
+            "Restart your terminal and Streamlit after "
+            "changing environment variables."
+        )
+
+    # Retrieve relevant dataset context.
+
+    if use_knowledge_base:
+
+        knowledge_context = retrieve_context(
+            user_message
+        )
+
+    else:
+
+        knowledge_context = (
+            "Knowledge-base retrieval is disabled."
+        )
+
+    # Prepare conversation history.
+
     contents = []
 
-    # Keep a short recent window to limit token use and retain useful context.
-    for item in chat_history[-8:]:
-        previous_user = str(item.get("user", "")).strip()
-        previous_bot = str(item.get("bot", "")).strip()
+    for message in chat_history[-8:]:
+
+        previous_user = str(
+            message.get("user", "")
+        ).strip()
+
+        previous_assistant = str(
+            message.get("bot", "")
+        ).strip()
 
         if previous_user:
+
             contents.append(
                 types.Content(
                     role="user",
-                    parts=[types.Part.from_text(text=previous_user)],
+                    parts=[
+                        types.Part.from_text(
+                            text=previous_user
+                        )
+                    ],
                 )
             )
-        if previous_bot:
+
+        if previous_assistant:
+
             contents.append(
                 types.Content(
                     role="model",
-                    parts=[types.Part.from_text(text=previous_bot)],
+                    parts=[
+                        types.Part.from_text(
+                            text=previous_assistant
+                        )
+                    ],
                 )
             )
 
-    final_prompt = (
-        f"Knowledge-base context (may be incomplete; do not treat it as proof if irrelevant):\n"
-        f"{context_text}\n\n"
-        f"User question:\n{user_message}\n\n"
-        "Answer the user's latest question. If the supplied context is relevant, use it. "
-        "If it is not relevant or does not contain the answer, say what is uncertain instead "
-        "of inventing details."
-    )
+    # Construct the latest prompt.
+
+    prompt = f"""
+Relevant knowledge-base context:
+
+{knowledge_context}
+
+Latest user question:
+
+{user_message}
+
+Instructions:
+
+Answer the latest question directly.
+
+Use the knowledge-base context when relevant.
+Do not assume every retrieved entry is relevant.
+If the available information is insufficient,
+explain the uncertainty instead of inventing facts.
+"""
+
     contents.append(
-        types.Content(role="user", parts=[types.Part.from_text(text=final_prompt)])
-    )
-    return contents
-
-
-def generate_answer(user_message: str, chat_history: list, use_kb: bool) -> str:
-    api_key = os.environ.get("Gemini_api", "").strip()
-    if not api_key:
-        return (
-            "Gemini API key is not configured. Set the `Gemini_Api` environment variable "
-            "and restart Streamlit."
+        types.Content(
+            role="user",
+            parts=[
+                types.Part.from_text(
+                    text=prompt
+                )
+            ],
         )
-
-    context_text = (
-        retrieve_context(user_message)
-        if use_kb
-        else "Knowledge-base retrieval is disabled for this conversation."
     )
 
     try:
-        client = get_gemini_client(api_key)
+
+        client = get_gemini_client(
+            api_key
+        )
+
         response = client.models.generate_content(
             model=MODEL_NAME,
-            contents=make_gemini_contents(user_message, chat_history, context_text),
+            contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
                 temperature=0.35,
@@ -259,170 +522,352 @@ def generate_answer(user_message: str, chat_history: list, use_kb: bool) -> str:
             ),
         )
 
-        answer = (response.text or "").strip()
+        answer = (
+            response.text or ""
+        ).strip()
+
         if not answer:
+
             return (
-                "I couldn't generate a text response for that message. "
+                "I couldn't generate a response. "
                 "Please rephrase your question and try again."
             )
+
         return answer
 
-    except Exception as exc:
-        # Avoid exposing credentials or full request details to end users.
-        error_text = str(exc).lower()
-        if "api key" in error_text or "permission" in error_text or "unauthenticated" in error_text:
+    except Exception as error:
+
+        # Show useful errors without exposing the API key.
+
+        error_message = str(
+            error
+        ).lower()
+
+        if (
+            "api key" in error_message
+            or "unauthenticated" in error_message
+            or "permission_denied" in error_message
+            or "permission denied" in error_message
+            or "401" in error_message
+            or "403" in error_message
+        ):
+
             return (
-                "Gemini could not authenticate the request. Check that `Gemini_Api` contains "
-                "a valid Gemini API key and that the key has access to the selected model."
+                "❌ Gemini authentication failed.\n\n"
+                "Verify that your API key is valid and "
+                "has access to the selected model."
             )
-        if "quota" in error_text or "resource_exhausted" in error_text or "rate limit" in error_text:
+
+        if (
+            "quota" in error_message
+            or "resource_exhausted" in error_message
+            or "rate limit" in error_message
+            or "429" in error_message
+        ):
+
             return (
-                "The Gemini API quota or rate limit has been reached. Check your API usage "
-                "and try again later."
+                "⚠️ Gemini API quota or rate limit reached. "
+                "Check your API usage and try again later."
             )
-        if "not found" in error_text or "404" in error_text:
+
+        if (
+            "404" in error_message
+            or "not found" in error_message
+        ):
+
             return (
-                f"The selected Gemini model (`{MODEL_NAME}`) was not found or is unavailable "
-                "for this API key. Set `GEMINI_MODEL` to a model enabled for your account."
+                f"⚠️ Gemini model `{MODEL_NAME}` could not "
+                "be found or is unavailable for your API key. "
+                "Check the model name and API access."
             )
+
+        # Log the technical details in the terminal.
+        # Never print the API key.
+
+        print(
+            "Gemini request failed:",
+            type(error).__name__,
+            str(error)[:500],
+        )
+
         return (
-            "Gemini could not complete the request. Check your internet connection and API "
-            "configuration, then try again."
+            "❌ Gemini could not complete your request.\n\n"
+            "Check your internet connection, API configuration, "
+            "and model availability, then try again."
         )
 
 
-# -------------------------------------------------------------------
-# SIDEBAR
-# -------------------------------------------------------------------
+# ============================================================
+# 10. SIDEBAR
+# ============================================================
+
 with st.sidebar:
-    st.markdown("## ⚙️ Preferences")
+
+    st.markdown(
+        "## ⚙️ Preferences"
+    )
+
     st.session_state.user_name = st.text_input(
         "Display name",
         value=st.session_state.user_name,
         max_chars=40,
-        help="This name is only used in the chat display.",
     )
+
     st.session_state.use_knowledge_base = st.toggle(
-        "Use public-health CSV knowledge base",
+        "Use health CSV knowledge base",
         value=st.session_state.use_knowledge_base,
-        help="Pass relevant CSV entries as context to Gemini.",
     )
+
     st.session_state.show_timestamps = st.toggle(
-        "Show message timestamps",
+        "Show timestamps",
         value=st.session_state.show_timestamps,
     )
 
     st.divider()
-    st.markdown("### Knowledge base")
-    st.metric("Available entries", int(len(kb)))
-    if kb.empty:
-        st.caption("CSV data could not be loaded. Gemini can still answer general questions.")
-    else:
-        categories = sorted(kb["category"].dropna().unique().tolist())
-        st.caption("Loaded: " + ", ".join(categories))
 
-    if st.button("Clear conversation", use_container_width=True):
+    st.markdown(
+        "### 📚 Knowledge Base"
+    )
+
+    st.metric(
+        "Available entries",
+        len(kb),
+    )
+
+    if not kb.empty:
+
+        categories = sorted(
+            kb["category"].unique()
+        )
+
+        st.caption(
+            "Loaded: " + ", ".join(categories)
+        )
+
+    else:
+
+        st.warning(
+            "CSV datasets are unavailable."
+        )
+
+    st.divider()
+
+    if st.button(
+        "🗑 Clear conversation",
+        use_container_width=True,
+    ):
+
         st.session_state.history = []
+
         st.rerun()
 
     st.divider()
-    st.caption(f"Gemini model: `{MODEL_NAME}`")
-    st.caption("Your API key is read from the environment and is never displayed.")
+
+    st.caption(
+        f"Gemini model: {MODEL_NAME}"
+    )
+
+    st.caption(
+        "API credentials are read from environment variables."
+    )
 
 
-# -------------------------------------------------------------------
-# MAIN HEADER
-# -------------------------------------------------------------------
+# ============================================================
+# 11. MAIN HEADER
+# ============================================================
+
 st.markdown(
     """
     <style>
-    .block-container {max-width: 860px; padding-top: 2rem; padding-bottom: 3rem;}
+    .block-container {
+        max-width: 950px;
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+
     .hero {
-        padding: 1.5rem 1.6rem;
+        padding: 1.8rem;
         border: 1px solid rgba(128,128,128,.22);
         border-radius: 18px;
-        background: linear-gradient(135deg, rgba(37,99,235,.09), rgba(16,185,129,.07));
+        background:
+            linear-gradient(
+                135deg,
+                rgba(37,99,235,.12),
+                rgba(16,185,129,.08)
+            );
         margin-bottom: 1rem;
     }
-    .hero-kicker {
-        font-size: .78rem; text-transform: uppercase; letter-spacing: .14em;
-        font-weight: 700; opacity: .72; margin-bottom: .45rem;
+
+    .hero-label {
+        font-size: .76rem;
+        text-transform: uppercase;
+        letter-spacing: .15em;
+        font-weight: 700;
+        opacity: .7;
     }
-    .hero h1 {font-size: 2rem; line-height: 1.2; margin: 0 0 .55rem 0;}
-    .hero p {font-size: 1rem; opacity: .82; margin: 0; line-height: 1.6;}
-    .notice {
-        border-left: 3px solid #D97706; padding: .7rem .9rem; margin: 1rem 0;
-        background: rgba(217,119,6,.08); border-radius: 0 8px 8px 0;
-        font-size: .88rem;
+
+    .hero h1 {
+        font-size: 2rem;
+        margin: .5rem 0;
+    }
+
+    .hero p {
+        opacity: .8;
+        line-height: 1.7;
+    }
+
+    .medical-notice {
+        padding: .9rem 1rem;
+        border-left: 3px solid #D97706;
+        background: rgba(217,119,6,.08);
+        border-radius: 0 8px 8px 0;
+        margin-bottom: 1rem;
     }
     </style>
+
     <div class="hero">
-        <div class="hero-kicker">Public health · Gemini AI</div>
+        <div class="hero-label">
+            Public Health · Gemini AI
+        </div>
+
         <h1>🩺 Crafter's Health Assistant</h1>
-        <p>Ask clear questions about general health information, vaccination, and public health.
-        Responses may use your project’s CSV knowledge base.</p>
+
+        <p>
+            Your AI-powered assistant for general health education,
+            vaccination information, and public health questions.
+            Responses can incorporate your project's CSV knowledge base.
+        </p>
     </div>
-    <div class="notice">
-        <strong>Important:</strong> This assistant provides general information, not a medical
-        diagnosis. For urgent symptoms, contact local emergency services or seek immediate medical care.
+
+    <div class="medical-notice">
+        <strong>Medical disclaimer:</strong>
+        This assistant provides general information, not a medical
+        diagnosis. For urgent symptoms, seek immediate medical care.
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-if not os.environ.get("Gemini_Api", "").strip():
+
+# ============================================================
+# 12. API KEY STATUS
+# ============================================================
+
+if not get_api_key():
+
     st.warning(
-        "Gemini API key not found. Configure the `Gemini_Api` environment variable before sending messages."
+        "Gemini API key not found. "
+        "Check your Windows environment variable settings "
+        "and restart the terminal running Streamlit."
     )
 
 
-# -------------------------------------------------------------------
-# CHAT HISTORY RENDER
-# -------------------------------------------------------------------
+# ============================================================
+# 13. DISPLAY CHAT HISTORY
+# ============================================================
+
 for entry in st.session_state.history:
+
     with st.chat_message("user"):
-        st.markdown(f"**{st.session_state.user_name or 'You'}**")
-        st.markdown(entry["user"])
+
+        st.markdown(
+            f"**{st.session_state.user_name or 'You'}**"
+        )
+
+        st.markdown(
+            entry["user"]
+        )
+
         if st.session_state.show_timestamps:
-            st.caption(entry.get("time", ""))
 
-    with st.chat_message("assistant", avatar="🩺"):
-        st.markdown(entry["bot"])
+            st.caption(
+                entry.get("time", "")
+            )
+
+    with st.chat_message(
+        "assistant",
+        avatar="🩺",
+    ):
+
+        st.markdown(
+            entry["bot"]
+        )
+
         if st.session_state.show_timestamps:
-            st.caption(entry.get("time", ""))
+
+            st.caption(
+                entry.get("time", "")
+            )
 
 
-# -------------------------------------------------------------------
-# CHAT INPUT
-# -------------------------------------------------------------------
-user_message = st.chat_input("Ask about health, vaccines, or public health…")
+# ============================================================
+# 14. CHAT INPUT
+# ============================================================
+
+user_message = st.chat_input(
+    "Ask about health, vaccines, or public health..."
+)
+
+
+# ============================================================
+# 15. PROCESS USER MESSAGE
+# ============================================================
 
 if user_message and user_message.strip():
-    clean_message = user_message.strip()
+
+    user_message = user_message.strip()
+
+    # Preserve the history before adding the new message.
+
+    previous_history = list(
+        st.session_state.history
+    )
+
+    timestamp = datetime.now().astimezone().strftime(
+        "%d %b %Y, %I:%M %p"
+    )
+
+    # Display the user's message immediately.
+
+    with st.chat_message("user"):
+
+        st.markdown(
+            f"**{st.session_state.user_name or 'You'}**"
+        )
+
+        st.markdown(
+            user_message
+        )
+
+    # Generate the Gemini response.
+
+    with st.chat_message(
+        "assistant",
+        avatar="🩺",
+    ):
+
+        with st.spinner(
+            "Thinking with Gemini..."
+        ):
+
+            bot_reply = generate_answer(
+                user_message=user_message,
+                chat_history=previous_history,
+                use_knowledge_base=(
+                    st.session_state.use_knowledge_base
+                ),
+            )
+
+        st.markdown(
+            bot_reply
+        )
+
+    # Save the conversation.
 
     st.session_state.history.append(
         {
-            "user": clean_message,
-            "bot": "",
-            "time": datetime.now(timezone.utc).astimezone().strftime("%d %b %Y, %I:%M %p"),
+            "user": user_message,
+            "bot": bot_reply,
+            "time": timestamp,
         }
-    )
-    current_index = len(st.session_state.history) - 1
-
-    with st.chat_message("user"):
-        st.markdown(f"**{st.session_state.user_name or 'You'}**")
-        st.markdown(clean_message)
-
-    with st.chat_message("assistant", avatar="🩺"):
-        with st.spinner("Thinking with Gemini…"):
-            reply = generate_answer(
-                clean_message,
-                st.session_state.history[:current_index],
-                st.session_state.use_knowledge_base,
-            )
-        st.markdown(reply)
-
-    st.session_state.history[current_index]["bot"] = reply
-    st.session_state.history[current_index]["time"] = (
-        datetime.now(timezone.utc).astimezone().strftime("%d %b %Y, %I:%M %p")
     )
