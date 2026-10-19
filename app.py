@@ -7,8 +7,7 @@ from typing import Any
 import pandas as pd
 import requests
 import streamlit as st
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 
 # ============================================================
@@ -22,9 +21,8 @@ st.set_page_config(
 )
 
 APP_NAME = "Health Assistant"
-# Optionally set GEMINI_MODEL in Streamlit Secrets to pin a specific model.
-# Otherwise, discover a text-generation model available to this API key.
-MODEL_NAME = os.getenv("GEMINI_MODEL", "").strip()
+# Configure OPENAI_MODEL in Streamlit Secrets if you want to change the model.
+MODEL_NAME = os.getenv("OPENAI_MODEL", "gpt-5-mini").strip()
 
 
 DATASET_URLS = {
@@ -322,31 +320,6 @@ init_state()
 
 
 # ============================================================
-# API KEY: STREAMLIT CLOUD SECRETS FIRST, THEN ENVIRONMENT
-# ============================================================
-def get_api_key() -> str:
-    names = ("Gemini_api", "Gemini_Api", "GEMINI_API_KEY")
-
-    # Streamlit Community Cloud Secrets
-    for name in names:
-        try:
-            value = st.secrets.get(name, "")
-            if value and str(value).strip():
-                return str(value).strip()
-        except Exception:
-            # st.secrets can raise when no secrets file exists.
-            pass
-
-    # Local environment variables
-    for name in names:
-        value = os.environ.get(name, "")
-        if value and value.strip():
-            return value.strip()
-
-    return ""
-
-
-# ============================================================
 # DATA LOADING
 # ============================================================
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -451,105 +424,28 @@ def retrieve_context(query: str, max_items: int = 4) -> str:
 # GEMINI
 # ============================================================
 @st.cache_resource
-def get_gemini_client(api_key: str) -> genai.Client:
-    return genai.Client(api_key=api_key)
+def get_openai_client(api_key: str) -> OpenAI:
+    return OpenAI(api_key=api_key)
 
 
-def available_gemini_models(client: genai.Client) -> list[str]:
-    """Discover models available to this API key instead of guessing model IDs."""
-    candidates = []
+def get_api_key() -> str:
+    """Read OpenAI key from Streamlit Secrets first, then environment variables."""
+    names = ("OPENAI_API_KEY", "OpenAI_api", "OpenAI_Api")
 
-    if MODEL_NAME:
-        candidates.append(MODEL_NAME)
-
-    try:
-        for model in client.models.list():
-            name = str(getattr(model, "name", "") or "").strip()
-            actions = getattr(model, "supported_actions", None) or []
-            actions = [str(action).lower() for action in actions]
-
-            if name.startswith("models/"):
-                name = name.split("/", 1)[1]
-
-            lower_name = name.lower()
-            if not lower_name.startswith("gemini"):
-                continue
-            if any(term in lower_name for term in ("embedding", "aqa")):
-                continue
-            if actions and not any("generatecontent" in action for action in actions):
-                continue
-
-            candidates.append(name)
-
-    except Exception as exc:
-        print(
-            f"Could not list Gemini models ({type(exc).__name__}): "
-            f"{str(exc)[:250]}"
-        )
-
-    models = list(dict.fromkeys(candidates))
-
-    if not MODEL_NAME:
-        models.sort(
-            key=lambda name: (
-                "flash" not in name.lower(),
-                "pro" in name.lower(),
-                name.lower(),
-            )
-        )
-
-    return models
-
-
-def call_gemini(
-    client: genai.Client,
-    contents: list,
-    system_instruction: str,
-    temperature: float = 0.1,
-) -> str:
-    models = available_gemini_models(client)
-
-    if not models:
-        raise RuntimeError(
-            "No Gemini text-generation model was listed for this API key. "
-            "Check API access or set GEMINI_MODEL to a model available to this project."
-        )
-
-    last_error = None
-
-    for model_name in models:
+    for name in names:
         try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=temperature,
-                    top_p=0.9,
-                    max_output_tokens=1000,
-                ),
-            )
+            value = st.secrets.get(name, "")
+            if value and str(value).strip():
+                return str(value).strip()
+        except Exception:
+            pass
 
-            answer = (response.text or "").strip()
-            if answer:
-                return answer
+    for name in names:
+        value = os.environ.get(name, "")
+        if value and value.strip():
+            return value.strip()
 
-        except Exception as exc:
-            last_error = exc
-            message = str(exc).lower()
-
-            # Retry another model only when this model is unavailable.
-            if any(term in message for term in (
-                "404", "not found", "not supported", "unknown model",
-                "model is not available", "unsupported model"
-            )):
-                continue
-            raise
-
-    if last_error:
-        raise last_error
-
-    raise RuntimeError("Gemini returned an empty response for available models.")
+    return ""
 
 
 OUT_OF_SCOPE_REPLY = (
@@ -575,26 +471,30 @@ Return exactly one word: HEALTH_RELATED or OUT_OF_SCOPE.
 """
 
 
-def is_health_related(client: genai.Client, user_message: str) -> bool:
-    """Classify the request before generating an answer."""
-    contents = [
-        types.Content(
-            role="user",
-            parts=[
-                types.Part.from_text(
-                    text=f"Classify this user message:\n{user_message}"
-                )
-            ],
-        )
-    ]
+def openai_text_response(
+    client: OpenAI,
+    instructions: str,
+    input_messages,
+    temperature: float = 0.2,
+) -> str:
+    """Call the OpenAI Responses API."""
+    response = client.responses.create(
+        model=MODEL_NAME,
+        instructions=instructions,
+        input=input_messages,
+        max_output_tokens=1000,
+    )
+    return (response.output_text or "").strip()
 
-    result = call_gemini(
+
+def is_health_related(client: OpenAI, user_message: str) -> bool:
+    """Classify the user's intent before answering."""
+    result = openai_text_response(
         client=client,
-        contents=contents,
-        system_instruction=SCOPE_CLASSIFIER_INSTRUCTION,
+        instructions=SCOPE_CLASSIFIER_INSTRUCTION,
+        input_messages=f"Classify this user message:\n{user_message}",
         temperature=0,
     )
-
     # Fail closed if classification is unclear.
     return result.strip().upper().startswith("HEALTH_RELATED")
 
@@ -608,15 +508,15 @@ def generate_answer(
 
     if not api_key:
         return (
-            "I couldn't find the Gemini API key in this deployed app. "
-            "Open your Streamlit app's **Settings → Secrets**, verify that "
-            "`Gemini_api` is present and saved, then reboot the app."
+            "I couldn't find the OpenAI API key in this deployed app. "
+            "Open your Streamlit app's **Settings → Secrets**, add "
+            "`OPENAI_API_KEY = \"your-key\"`, save, and reboot the app."
         )
 
     try:
-        client = get_gemini_client(api_key)
+        client = get_openai_client(api_key)
 
-        # Enforce the health-only boundary before generating an answer.
+        # Enforce health-only scope before generating an answer.
         if not is_health_related(client, user_message):
             return OUT_OF_SCOPE_REPLY
 
@@ -626,25 +526,17 @@ def generate_answer(
             else "Knowledge-base retrieval is disabled by the user."
         )
 
-        contents = []
-
-        # Add recent conversation turns for continuity.
+        input_messages = []
         for turn in history[-8:]:
             previous_user = str(turn.get("user", "")).strip()
             previous_bot = str(turn.get("bot", "")).strip()
 
             if previous_user and previous_bot:
-                contents.append(
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(text=previous_user)],
-                    )
+                input_messages.append(
+                    {"role": "user", "content": previous_user}
                 )
-                contents.append(
-                    types.Content(
-                        role="model",
-                        parts=[types.Part.from_text(text=previous_bot)],
-                    )
+                input_messages.append(
+                    {"role": "assistant", "content": previous_bot}
                 )
 
         prompt = f"""
@@ -659,58 +551,51 @@ Use the supplied context only when relevant. It may be incomplete or irrelevant.
 If it does not answer the question, use general health knowledge carefully and
 communicate uncertainty. Do not force irrelevant CSV entries into the answer.
 """
+        input_messages.append({"role": "user", "content": prompt})
 
-        contents.append(
-            types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=prompt)],
-            )
-        )
-
-        return call_gemini(
+        return openai_text_response(
             client=client,
-            contents=contents,
-            system_instruction=SYSTEM_INSTRUCTION,
+            instructions=SYSTEM_INSTRUCTION,
+            input_messages=input_messages,
             temperature=0.25,
         )
 
     except Exception as exc:
         message = str(exc).lower()
         print(
-            f"Gemini request failed ({type(exc).__name__}): "
+            f"OpenAI request failed ({type(exc).__name__}): "
             f"{str(exc)[:400]}"
         )
 
         if any(term in message for term in (
-            "api key", "unauthenticated", "permission_denied",
-            "permission denied", "401", "403"
+            "authentication", "api key", "unauthorized", "401", "invalid_api_key"
         )):
             return (
-                "Gemini authentication failed. Verify that the key in "
-                "Streamlit Secrets is valid and that the Gemini API is enabled."
+                "OpenAI authentication failed. Check that the API key in "
+                "Streamlit Secrets is valid and has not been revoked."
             )
 
         if any(term in message for term in (
-            "quota", "resource_exhausted", "rate limit", "429"
+            "rate limit", "quota", "429", "insufficient_quota"
         )):
             return (
-                "The Gemini API quota or rate limit has been reached. "
-                "Check your API usage and try again later."
+                "The OpenAI API rate limit or usage quota has been reached. "
+                "Check your API billing, usage limits, and rate limits. "
+                "A ChatGPT subscription does not include API usage credits."
             )
 
         if any(term in message for term in (
-            "404", "not found", "not supported", "unknown model",
-            "no gemini text-generation model"
+            "model_not_found", "model not found", "does not exist", "404"
         )):
             return (
-                "I couldn't find an available Gemini text-generation model for this API key. "
-                "Check the models enabled for your Google AI project, or set `GEMINI_MODEL` "
-                "in Streamlit Secrets to a model ID available to your project."
+                f"The OpenAI model `{MODEL_NAME}` is unavailable to this API project. "
+                "Check the model access for your API account or set `OPENAI_MODEL` "
+                "in Streamlit Secrets to a model you can access."
             )
 
         return (
-            "Gemini couldn't complete this request. Check the Streamlit app logs "
-            "for technical details, then verify model availability and API access."
+            "OpenAI couldn't complete this request. Check the Streamlit app logs "
+            "for the technical error, and verify API access, billing, and model availability."
         )
 
 
@@ -741,7 +626,7 @@ with st.sidebar:
     st.session_state.use_knowledge_base = st.toggle(
         "Use project knowledge base",
         value=st.session_state.use_knowledge_base,
-        help="Pass matching CSV entries to Gemini as additional context.",
+        help="Pass matching CSV entries to OpenAI as additional context.",
     )
 
     st.session_state.show_timestamps = st.toggle(
@@ -757,7 +642,7 @@ with st.sidebar:
         categories = sorted(kb["category"].dropna().unique().tolist())
         st.caption("Loaded: " + " · ".join(categories))
     else:
-        st.caption("CSV data is unavailable. Gemini can still be used.")
+        st.caption("CSV data is unavailable. OpenAI can still be used.")
 
     st.divider()
     api_key_found = bool(get_api_key())
@@ -766,10 +651,10 @@ with st.sidebar:
         f"""
         <div class="status-card">
             <div class="status-title">
-                {"🟢 Gemini configuration detected" if api_key_found else "🟠 Gemini key not detected"}
+                {"🟢 OpenAI configuration detected" if api_key_found else "🟠 OpenAI key not detected"}
             </div>
             <div class="status-copy">
-                {"The app can read a key from Secrets or environment variables." if api_key_found else "Check Settings → Secrets and confirm the key name is Gemini_api."}
+                {"The app can read an OpenAI key from Secrets or environment variables." if api_key_found else "Check Settings → Secrets and confirm the key name is OPENAI_API_KEY."}
             </div>
         </div>
         """,
@@ -777,9 +662,9 @@ with st.sidebar:
     )
 
     st.caption(
-        f"Preferred model: `{MODEL_NAME}`"
+        f"OpenAI model: `{MODEL_NAME}`"
         if MODEL_NAME
-        else "Model: automatically selected from those available to your API key"
+        else "OpenAI model is configured in the app settings"
     )
 
     if st.button("Clear conversation", use_container_width=True):
@@ -803,11 +688,11 @@ st.markdown(
         <h1>Your health questions,<br>answered with clarity.</h1>
         <p>
             Ask questions about general health, vaccination, and public health.
-            Get conversational explanations powered by Gemini, with relevant
+            Get conversational explanations powered by OpenAI, with relevant
             information from your project's CSV knowledge base when available.
         </p>
         <div class="hero-tags">
-            <span class="hero-tag">✦ Gemini AI</span>
+            <span class="hero-tag">✦ OpenAI</span>
             <span class="hero-tag">▤ Project knowledge base</span>
             <span class="hero-tag">◉ Conversational answers</span>
             <span class="hero-tag">✓ Health-focused responses</span>
