@@ -1276,30 +1276,11 @@ if user_input:
             st.caption(current_timestamp)
 
         # ----------------------------------------------------
-        # STEP 1: HEALTH TOPIC VALIDATION
+        # STEP 1: EMERGENCY SAFETY CHECK
+        # Check emergencies BEFORE topic validation.
         # ----------------------------------------------------
 
-        if not is_health_related(user_input):
-
-            assistant_answer = OUT_OF_SCOPE_MESSAGE
-
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": assistant_answer,
-                "timestamp": datetime.now().strftime(
-                    "%d %b %Y, %I:%M %p"
-                ),
-                "sources": "",
-            })
-
-            with st.chat_message("assistant"):
-                st.markdown(assistant_answer)
-
-        # ----------------------------------------------------
-        # STEP 2: EMERGENCY SAFETY CHECK
-        # ----------------------------------------------------
-
-        elif detect_emergency(user_input):
+        if detect_emergency(user_input):
 
             assistant_answer = EMERGENCY_MESSAGE
 
@@ -1314,6 +1295,26 @@ if user_input:
 
             with st.chat_message("assistant"):
                 st.error(assistant_answer)
+
+        # ----------------------------------------------------
+        # STEP 2: HEALTH TOPIC VALIDATION
+        # ----------------------------------------------------
+
+        elif not is_health_related(user_input):
+
+            assistant_answer = OUT_OF_SCOPE_MESSAGE
+
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": assistant_answer,
+                "timestamp": datetime.now().strftime(
+                    "%d %b %Y, %I:%M %p"
+                ),
+                "sources": "",
+            })
+
+            with st.chat_message("assistant"):
+                st.markdown(assistant_answer)
 
         # ----------------------------------------------------
         # STEP 3: GENERATE RESPONSE USING OLLAMA
